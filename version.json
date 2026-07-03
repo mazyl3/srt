@@ -1,0 +1,7 @@
+{
+  "version": "0.1.0",
+  "build": "1",
+  "downloadURL": "https://github.com/mazyl3/srt/releases/download/v0.1.0/SRT-Forge-Setup.dmg",
+  "releaseNotes": "Initial public setup build with local Whisper SRT generation, LT/EN subtitle output, MP4 subtitle-track export, and update checking.",
+  "minimumSystemVersion": "13.0"
+}

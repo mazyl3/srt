@@ -1,0 +1,878 @@
+import AppKit
+import Foundation
+import UniformTypeIdentifiers
+
+@MainActor
+final class AppModel: ObservableObject {
+    @Published var selectedFile: URL?
+    @Published var resultFile: URL?
+    @Published var resultFiles: [URL] = []
+    @Published var jobs: [TranscriptionJob] = []
+    @Published var deviceProfile = DeviceProfiler.current()
+    @Published var maxParallelJobs = DeviceProfiler.current().recommendedParallelJobs
+    @Published var performanceMode: PerformanceMode = .recommended
+    @Published var settings = AppSettings()
+    @Published var mode: WorkMode = .minimal
+    @Published var phase: JobPhase = .idle
+    @Published var progress: Double = 0
+    @Published var logs: [LogEntry] = []
+    @Published var dependencies = DependencyReport()
+    @Published var isRunning = false
+    @Published var isDownloadingModel = false
+    @Published var isPreparingTools = false
+    @Published var isCheckingForUpdates = false
+    @Published var updateStatusMessage = "Atnaujinimai dar netikrinti."
+    @Published var availableUpdate: AppUpdate?
+    @Published var statusMessage = "Pasirink video arba audio failą, iš kurio reikia sukurti subtitrus."
+
+    private let runner = ProcessRunner()
+    private var activeRunners: [UUID: ProcessRunner] = [:]
+    private var cancellation = CancellationBox()
+
+    var isBusy: Bool {
+        isRunning || isDownloadingModel || isPreparingTools
+    }
+
+    var canStart: Bool {
+        (selectedFile != nil || !jobs.isEmpty)
+            && dependencies.ffmpeg.isReady
+            && dependencies.whisper.isReady
+            && dependencies.model.isReady
+            && videoExportInputIsValid
+            && !isBusy
+    }
+
+    var offlineReady: Bool {
+        dependencies.ffmpeg.isReady
+            && dependencies.whisper.isReady
+            && dependencies.model.isReady
+    }
+
+    var offlineStatusMessage: String {
+        if offlineReady {
+            return "Pilnai paruošta darbui be interneto. Transkripcija, LT/EN SRT ir vertimas vyksta lokaliai šiame Mac."
+        }
+        return "Offline darbui dar trūksta vietinių komponentų. Pirmą kartą reikia turėti ffmpeg, whisper.cpp ir modelio failą šiame Mac."
+    }
+
+    var primaryBlocker: String? {
+        if selectedFile == nil {
+            return "Pirmiausia pasirink video arba audio failą."
+        }
+        if !dependencies.ffmpeg.isReady {
+            return "Trūksta ffmpeg. Spausk „Paruošti programą“."
+        }
+        if !dependencies.whisper.isReady {
+            return "Trūksta Whisper variklio. Spausk „Paruošti programą“."
+        }
+        if !dependencies.model.isReady {
+            return "Trūksta pilno large-v3 modelio. Spausk „Atsisiųsti large-v3“."
+        }
+        if !videoExportInputIsValid {
+            return "MP4 eksportui reikia video failo. Audio failams rinkis SRT eksportą."
+        }
+        if isBusy {
+            return "Palauk, kol baigsis dabartinis darbas."
+        }
+        return nil
+    }
+
+    var readinessScore: Int {
+        [(selectedFile != nil || !jobs.isEmpty), dependencies.ffmpeg.isReady, dependencies.whisper.isReady, dependencies.model.isReady, videoExportInputIsValid]
+            .filter { $0 }
+            .count
+    }
+
+    init() {
+        createSupportFolders()
+        applyRecommendedPerformance()
+        refreshDependencies()
+    }
+
+    func createSupportFolders() {
+        try? FileManager.default.createDirectory(at: AppPaths.modelsDirectory, withIntermediateDirectories: true)
+        try? FileManager.default.createDirectory(at: AppPaths.jobsDirectory, withIntermediateDirectories: true)
+    }
+
+    func refreshDependencies() {
+        deviceProfile = DeviceProfiler.current()
+        dependencies = DependencyResolver.report(settings: settings)
+        updateInitialSetupMessage()
+    }
+
+    private func updateInitialSetupMessage() {
+        guard phase == .idle, selectedFile == nil, jobs.isEmpty, !isBusy else { return }
+
+        if offlineReady {
+            statusMessage = "Offline režimas paruoštas. Pasirink video arba audio failą ir kurk SRT be interneto."
+        } else {
+            statusMessage = "Pirmam paruošimui prisijunk prie interneto ir spausk „Internetinis paruošimas“. Po to appas veiks offline."
+        }
+    }
+
+    func applyRecommendedPerformance() {
+        deviceProfile = DeviceProfiler.current()
+        performanceMode = .recommended
+        maxParallelJobs = deviceProfile.recommendedParallelJobs
+        settings.threadCount = deviceProfile.recommendedThreadsPerJob
+        settings.useGPU = true
+    }
+
+    func applyWorkMode(_ newMode: WorkMode) {
+        mode = newMode
+
+        if newMode != .advanced, let selectedFile {
+            jobs = [TranscriptionJob(inputFile: selectedFile)]
+        }
+
+        switch newMode {
+        case .minimal:
+            settings.languageCode = "lt"
+            settings.autoDetectLanguage = false
+            settings.subtitleOutputMode = .lithuanianOnly
+            settings.videoExportMode = .srtOnly
+            settings.keepWorkingFiles = false
+            settings.splitOnWord = true
+            settings.normalizePunctuation = true
+            settings.formatDialogueLines = true
+            settings.suppressNonSpeechTokens = true
+            settings.maxSegmentLength = 42
+        case .simple:
+            settings.keepWorkingFiles = false
+            settings.normalizePunctuation = true
+            settings.formatDialogueLines = true
+            settings.suppressNonSpeechTokens = true
+        case .power, .advanced:
+            break
+        }
+    }
+
+    func applyPerformanceMode(_ mode: PerformanceMode) {
+        deviceProfile = DeviceProfiler.current()
+        performanceMode = mode
+
+        switch mode {
+        case .safe:
+            maxParallelJobs = 1
+            settings.threadCount = max(2, min(4, deviceProfile.activeCores / 2))
+            settings.useGPU = true
+        case .recommended:
+            maxParallelJobs = deviceProfile.recommendedParallelJobs
+            settings.threadCount = deviceProfile.recommendedThreadsPerJob
+            settings.useGPU = true
+        case .maximum:
+            settings.threadCount = max(2, deviceProfile.activeCores)
+            settings.useGPU = true
+            maxParallelJobs = maxHardwareParallelJobs
+        }
+    }
+
+    var maxHardwareParallelJobs: Int {
+        max(1, min(4, max(deviceProfile.recommendedParallelJobs, deviceProfile.memoryGB / 8)))
+    }
+
+    var readinessTotal: Int {
+        settings.videoExportMode == .srtOnly ? 4 : 5
+    }
+
+    var videoExportInputIsValid: Bool {
+        guard settings.videoExportMode != .srtOnly else { return true }
+        let inputs = jobs.isEmpty ? [selectedFile].compactMap { $0 } : jobs.map(\.inputFile)
+        guard !inputs.isEmpty else { return true }
+        return inputs.allSatisfy(Self.isLikelyVideoFile)
+    }
+
+    var performanceWarning: String {
+        switch performanceMode {
+        case .safe:
+            return "Saugus režimas palieka daugiau resursų kitoms programoms."
+        case .recommended:
+            return deviceProfile.recommendation
+        case .maximum:
+            return "Iki galo režimas apkraus M1 Pro stipriau. Jei Mac pradės strigti arba kaisti, grįžk į rekomenduojamą režimą."
+        }
+    }
+
+    func selectInputFile() {
+        let panel = NSOpenPanel()
+        panel.title = "Pasirink video arba audio failą"
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = mode == .advanced
+        panel.allowedContentTypes = [.movie, .audio, .mpeg4Movie, .quickTimeMovie, .mp3, .wav, .mpeg4Audio]
+
+        if panel.runModal() == .OK {
+            setInputFiles(panel.urls)
+        }
+    }
+
+    func setInputFile(_ url: URL) {
+        setInputFiles([url])
+    }
+
+    func setInputFiles(_ urls: [URL]) {
+        let files = urls.filter { FileManager.default.fileExists(atPath: $0.path) }
+        guard !files.isEmpty else { return }
+
+        selectedFile = files.first
+        jobs = files.map { TranscriptionJob(inputFile: $0) }
+        resultFile = nil
+        resultFiles = []
+        phase = .idle
+        progress = 0
+        statusMessage = files.count == 1
+            ? "Failas pasirinktas. Dabar gali kurti SRT."
+            : "Pasirinkta \(files.count) failų. Advanced režimas apdoros juos pagal kompiuterio pajėgumą."
+
+        for url in files {
+            append(.info, "Pasirinktas failas: \(url.path)")
+        }
+    }
+
+    func selectOutputFolder() {
+        let panel = NSOpenPanel()
+        panel.title = "Pasirink, kur išsaugoti SRT"
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+
+        if panel.runModal() == .OK, let url = panel.url {
+            settings.outputFolder = url
+            append(.info, "SRT bus išsaugotas: \(url.path)")
+        }
+    }
+
+    func selectModelFile() {
+        let panel = NSOpenPanel()
+        panel.title = "Pasirink Whisper large-v3 modelio failą"
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.allowedContentTypes = [.data]
+
+        if panel.runModal() == .OK, let url = panel.url {
+            settings.modelPath = url.path
+            refreshDependencies()
+            append(.info, "Modelis pasirinktas: \(url.path)")
+        }
+    }
+
+    func selectFFmpegBinary() {
+        selectExecutable(title: "Pasirink ffmpeg") { [weak self] url in
+            self?.settings.ffmpegPath = url.path
+            self?.refreshDependencies()
+            self?.append(.info, "ffmpeg: \(url.path)")
+        }
+    }
+
+    func selectWhisperBinary() {
+        selectExecutable(title: "Pasirink whisper.cpp CLI") { [weak self] url in
+            self?.settings.whisperPath = url.path
+            self?.refreshDependencies()
+            self?.append(.info, "whisper.cpp: \(url.path)")
+        }
+    }
+
+    private func selectExecutable(title: String, onPick: (URL) -> Void) {
+        let panel = NSOpenPanel()
+        panel.title = title
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+
+        if panel.runModal() == .OK, let url = panel.url {
+            onPick(url)
+        }
+    }
+
+    func start() {
+        guard !isRunning, !isDownloadingModel, !isPreparingTools else { return }
+
+        if mode == .advanced && jobs.count > 1 {
+            startBatch()
+            return
+        }
+
+        guard let selectedFile else {
+            statusMessage = "Pirma pasirink failą."
+            append(.warning, "Bandymas pradėti be failo.")
+            return
+        }
+
+        refreshDependencies()
+        cancellation = CancellationBox()
+        isRunning = true
+        resultFile = nil
+        resultFiles = []
+        logs.removeAll()
+        append(.info, "Darbas pradėtas.")
+
+        let pipeline = SubtitlePipeline(runner: runner)
+        let localSettings = settings
+        let token = cancellation
+
+        Task {
+            do {
+                let result = try await pipeline.run(
+                    inputFile: selectedFile,
+                    settings: localSettings,
+                    updatePhase: { [weak self] phase, progress in
+                        self?.phase = phase
+                        self?.progress = progress
+                        self?.statusMessage = phase.rawValue
+                    },
+                    log: { [weak self] level, message in
+                        self?.append(level, message)
+                    },
+                    cancellation: {
+                        token.isCancelled
+                    }
+                )
+
+                resultFile = result.primaryFile
+                resultFiles = result.allFiles
+                phase = .complete
+                progress = 1
+                statusMessage = completionMessage(for: result)
+            } catch PipelineError.cancelled {
+                phase = .cancelled
+                progress = 0
+                statusMessage = "Darbas nutrauktas."
+                append(.warning, "Darbas nutrauktas vartotojo.")
+            } catch {
+                phase = .failed
+                statusMessage = error.localizedDescription
+                append(.error, error.localizedDescription)
+            }
+
+            isRunning = false
+            refreshDependencies()
+        }
+    }
+
+    func startBatch() {
+        guard !isRunning, !isDownloadingModel, !isPreparingTools else { return }
+        guard !jobs.isEmpty else {
+            statusMessage = "Pirma pasirink vieną ar kelis failus."
+            append(.warning, "Bandymas pradėti be failų.")
+            return
+        }
+
+        refreshDependencies()
+        guard dependencies.ffmpeg.isReady, dependencies.whisper.isReady, dependencies.model.isReady else {
+            statusMessage = primaryBlocker ?? "Trūksta paruošimo."
+            append(.warning, statusMessage)
+            return
+        }
+
+        cancellation = CancellationBox()
+        activeRunners.removeAll()
+        isRunning = true
+        resultFile = nil
+        resultFiles = []
+        phase = .validating
+        progress = 0
+        logs.removeAll()
+
+        let localSettings = settings
+        let token = cancellation
+        let items = jobs
+        let allowedParallelJobs = performanceMode == .maximum ? maxHardwareParallelJobs : deviceProfile.recommendedParallelJobs
+        let limit = max(1, min(maxParallelJobs, allowedParallelJobs, items.count))
+
+        append(.info, "Advanced režimas pradeda \(items.count) failų eilę. Vienu metu bus vykdoma iki \(limit) darbų.")
+
+        Task {
+            await withTaskGroup(of: Void.self) { group in
+                var iterator = items.makeIterator()
+
+                func enqueue(_ item: TranscriptionJob) {
+                    group.addTask {
+                        await self.runBatchJob(item: item, settings: localSettings, token: token)
+                    }
+                }
+
+                for _ in 0..<limit {
+                    if let item = iterator.next() {
+                        enqueue(item)
+                    }
+                }
+
+                while await group.next() != nil {
+                    if token.isCancelled {
+                        continue
+                    }
+                    if let item = iterator.next() {
+                        enqueue(item)
+                    }
+                }
+            }
+
+            let completed = jobs.filter { $0.state == .complete }.count
+            let failed = jobs.filter { $0.state == .failed }.count
+            let cancelled = jobs.filter { $0.state == .cancelled }.count
+
+            isRunning = false
+            activeRunners.removeAll()
+            progress = jobs.isEmpty ? 0 : jobs.map(\.progress).reduce(0, +) / Double(jobs.count)
+
+            if token.isCancelled || cancelled > 0 {
+                phase = .cancelled
+                statusMessage = "Eilė nutraukta. Baigta: \(completed), klaidos: \(failed)."
+            } else if failed > 0 {
+                phase = .failed
+                statusMessage = "Eilė baigta su klaidomis. Baigta: \(completed), klaidos: \(failed)."
+            } else {
+                phase = .complete
+                progress = 1
+                statusMessage = "Visi darbai baigti."
+            }
+
+            refreshDependencies()
+        }
+    }
+
+    private func runBatchJob(item: TranscriptionJob, settings: AppSettings, token: CancellationBox) async {
+        let jobRunner = ProcessRunner()
+        await MainActor.run {
+            activeRunners[item.id] = jobRunner
+            updateJob(item.id) {
+                $0.state = .running
+                $0.phase = .validating
+                $0.progress = 0.05
+                $0.statusMessage = "Darbas pradėtas."
+            }
+        }
+
+        let pipeline = SubtitlePipeline(runner: jobRunner)
+
+        do {
+            let result = try await pipeline.run(
+                inputFile: item.inputFile,
+                settings: settings,
+                updatePhase: { phase, progress in
+                    self.updateJob(item.id) {
+                        $0.phase = phase
+                        $0.progress = progress
+                        $0.statusMessage = phase.rawValue
+                    }
+                    self.updateAggregateProgress()
+                },
+                log: { level, message in
+                    self.appendJobLog(item.id, level, message)
+                },
+                cancellation: {
+                    token.isCancelled
+                }
+            )
+
+            updateJob(item.id) {
+                $0.resultFile = result.primaryFile
+                $0.phase = .complete
+                $0.state = .complete
+                $0.progress = 1
+                $0.statusMessage = completionMessage(for: result)
+            }
+        } catch PipelineError.cancelled {
+            updateJob(item.id) {
+                $0.phase = .cancelled
+                $0.state = .cancelled
+                $0.statusMessage = "Nutraukta."
+            }
+        } catch {
+            updateJob(item.id) {
+                $0.phase = .failed
+                $0.state = .failed
+                $0.statusMessage = error.localizedDescription
+            }
+            appendJobLog(item.id, .error, error.localizedDescription)
+        }
+
+        activeRunners[item.id] = nil
+        updateAggregateProgress()
+    }
+
+    private func updateJob(_ id: UUID, mutate: (inout TranscriptionJob) -> Void) {
+        guard let index = jobs.firstIndex(where: { $0.id == id }) else { return }
+        mutate(&jobs[index])
+    }
+
+    private func appendJobLog(_ id: UUID, _ level: LogEntry.LogLevel, _ message: String) {
+        updateJob(id) {
+            $0.logs.append(LogEntry(level: level, message: message))
+            if $0.logs.count > 120 {
+                $0.logs.removeFirst($0.logs.count - 120)
+            }
+        }
+        append(level, "\(jobs.first(where: { $0.id == id })?.displayName ?? "Darbas"): \(message)")
+    }
+
+    private func updateAggregateProgress() {
+        guard !jobs.isEmpty else { return }
+        progress = jobs.map(\.progress).reduce(0, +) / Double(jobs.count)
+        if jobs.contains(where: { $0.state == .running }) {
+            phase = .transcribing
+            statusMessage = "Advanced režimas apdoroja \(jobs.filter { $0.state == .running }.count) darbą(-us) vienu metu."
+        }
+    }
+
+    func cancel() {
+        cancellation.cancel()
+        runner.cancel()
+        for activeRunner in activeRunners.values {
+            activeRunner.cancel()
+        }
+        append(.warning, "Siunčiama nutraukimo komanda.")
+    }
+
+    func openResult() {
+        guard let resultFile else { return }
+        NSWorkspace.shared.open(resultFile)
+    }
+
+    func revealResult() {
+        guard let resultFile else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([resultFile])
+    }
+
+    func revealAllResults() {
+        let files = resultFiles.isEmpty ? [resultFile].compactMap { $0 } : resultFiles
+        guard !files.isEmpty else { return }
+        NSWorkspace.shared.activateFileViewerSelecting(files)
+    }
+
+    func openJobResult(_ job: TranscriptionJob) {
+        guard let resultFile = job.resultFile else { return }
+        NSWorkspace.shared.open(resultFile)
+    }
+
+    func revealJobResult(_ job: TranscriptionJob) {
+        guard let resultFile = job.resultFile else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([resultFile])
+    }
+
+    func openModelsFolder() {
+        NSWorkspace.shared.open(AppPaths.modelsDirectory)
+    }
+
+    var appVersion: String {
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.1.0"
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "1"
+        return "\(version) (\(build))"
+    }
+
+    var updateManifestURLString: String {
+        Bundle.main.object(forInfoDictionaryKey: "SRTForgeUpdateManifestURL") as? String ?? ""
+    }
+
+    func checkForUpdates() {
+        guard !isCheckingForUpdates else { return }
+
+        let manifestString = updateManifestURLString.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !manifestString.isEmpty, let manifestURL = URL(string: manifestString) else {
+            updateStatusMessage = "Atnaujinimų URL dar nesukonfigūruotas. Kai turėsime release vietą, įrašysime manifest URL į build."
+            append(.warning, updateStatusMessage)
+            return
+        }
+
+        isCheckingForUpdates = true
+        updateStatusMessage = "Tikrinami atnaujinimai..."
+        append(.info, "Tikrinamas atnaujinimų manifestas: \(manifestURL.absoluteString)")
+
+        Task {
+            do {
+                let (data, response) = try await URLSession.shared.data(from: manifestURL)
+                if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+                    throw PipelineError.commandFailed("Atnaujinimų serveris grąžino HTTP \(http.statusCode).")
+                }
+
+                let update = try JSONDecoder().decode(AppUpdate.self, from: data)
+                availableUpdate = update
+
+                if Self.isVersion(update.version, newerThan: currentShortVersion) {
+                    updateStatusMessage = "Yra nauja versija \(update.version)."
+                    append(.success, "Rastas atnaujinimas: \(update.version)")
+                } else {
+                    updateStatusMessage = "Naudoji naujausią versiją \(currentShortVersion)."
+                    append(.success, "Atnaujinimų nėra.")
+                }
+            } catch {
+                updateStatusMessage = "Atnaujinimų patikra nepavyko: \(error.localizedDescription)"
+                append(.error, updateStatusMessage)
+            }
+
+            isCheckingForUpdates = false
+        }
+    }
+
+    func openAvailableUpdate() {
+        guard let availableUpdate else { return }
+        NSWorkspace.shared.open(availableUpdate.downloadURL)
+    }
+
+    var primaryActionTitle: String {
+        switch settings.videoExportMode {
+        case .srtOnly:
+            return "Kurti SRT"
+        case .videoOnly:
+            return "Kurti MP4"
+        case .srtAndVideo:
+            return "Kurti SRT + MP4"
+        }
+    }
+
+    var primaryActionSystemImage: String {
+        if !canStart { return "lock.fill" }
+        switch settings.videoExportMode {
+        case .srtOnly:
+            return "bolt.fill"
+        case .videoOnly:
+            return "film.fill"
+        case .srtAndVideo:
+            return "captions.bubble.fill"
+        }
+    }
+
+    private func completionMessage(for result: PipelineResult) -> String {
+        if result.videoFile != nil && !result.srtFiles.isEmpty {
+            return "SRT ir MP4 su subtitrais sukurti."
+        }
+        if result.videoFile != nil {
+            return "MP4 su subtitrais sukurtas."
+        }
+        if result.srtFiles.count > 1 {
+            return "SRT failai sukurti."
+        }
+        return "SRT failas sukurtas."
+    }
+
+    private var currentShortVersion: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.1.0"
+    }
+
+    private static func isVersion(_ candidate: String, newerThan current: String) -> Bool {
+        let left = candidate.split(separator: ".").map { Int($0) ?? 0 }
+        let right = current.split(separator: ".").map { Int($0) ?? 0 }
+        let count = max(left.count, right.count)
+
+        for index in 0..<count {
+            let a = index < left.count ? left[index] : 0
+            let b = index < right.count ? right[index] : 0
+            if a > b { return true }
+            if a < b { return false }
+        }
+        return false
+    }
+
+    private static func isLikelyVideoFile(_ url: URL) -> Bool {
+        let ext = url.pathExtension.lowercased()
+        return ["mp4", "mov", "m4v", "mkv", "webm", "avi"].contains(ext)
+    }
+
+    func prepareEverything() {
+        guard !isRunning, !isDownloadingModel, !isPreparingTools else { return }
+
+        isPreparingTools = true
+        cancellation = CancellationBox()
+        phase = .validating
+        progress = 0.05
+        statusMessage = "Ruošiama programa: įrankiai ir modelis."
+        append(.info, "Pradedamas automatinis įrankių paruošimas.")
+
+        let token = cancellation
+
+        Task {
+            do {
+                guard FileManager.default.isExecutableFile(atPath: "/opt/homebrew/bin/brew")
+                    || FileManager.default.isExecutableFile(atPath: "/usr/local/bin/brew")
+                else {
+                    throw PipelineError.commandFailed("Homebrew nerastas. Friend DMG aplanke atidaryk „Pirmas paruošimas.command“ arba įdiek Homebrew iš https://brew.sh, tada vėl spausk „Internetinis paruošimas“.")
+                }
+
+                let brewPath = FileManager.default.isExecutableFile(atPath: "/opt/homebrew/bin/brew")
+                    ? "/opt/homebrew/bin/brew"
+                    : "/usr/local/bin/brew"
+
+                progress = 0.15
+                statusMessage = "Diegiami ffmpeg, Whisper variklis ir modelio siuntimo įrankis."
+
+                try await runner.run(
+                    executable: "/bin/zsh",
+                    arguments: [
+                        "-lc",
+                        """
+                        \(brewPath) list ffmpeg >/dev/null 2>&1 || \(brewPath) install ffmpeg
+                        \(brewPath) list whisper-cpp >/dev/null 2>&1 || \(brewPath) install whisper-cpp
+                        /usr/bin/python3 -m pip install --user --upgrade 'huggingface_hub[hf_xet]'
+                        """
+                    ],
+                    log: { [weak self] level, message in
+                        self?.append(level, message)
+                    },
+                    cancellation: { token.isCancelled }
+                )
+
+                progress = 0.45
+                refreshDependencies()
+
+                try await downloadModel(token: token)
+
+                progress = 1.0
+                phase = .complete
+                statusMessage = "Viskas paruošta. Gali kurti SRT."
+                append(.success, "Pilnas paruošimas baigtas.")
+            } catch PipelineError.cancelled {
+                phase = .cancelled
+                statusMessage = "Paruošimas nutrauktas."
+                append(.warning, "Paruošimas nutrauktas.")
+            } catch {
+                phase = .failed
+                statusMessage = error.localizedDescription
+                append(.error, error.localizedDescription)
+            }
+
+            isPreparingTools = false
+            isDownloadingModel = false
+            refreshDependencies()
+        }
+    }
+
+    func downloadLargeV3Model() {
+        guard !isRunning, !isDownloadingModel, !isPreparingTools else { return }
+
+        isDownloadingModel = true
+        cancellation = CancellationBox()
+        phase = .validating
+        progress = 0.35
+        statusMessage = "Siunčiamas large-v3 modelis."
+        append(.info, "Pradedamas large-v3 modelio siuntimas.")
+
+        let token = cancellation
+
+        Task {
+            do {
+                try await downloadModel(token: token)
+                phase = .complete
+                progress = 1.0
+                statusMessage = "large-v3 modelis atsisiųstas."
+            } catch PipelineError.cancelled {
+                phase = .cancelled
+                statusMessage = "Modelio siuntimas nutrauktas."
+                append(.warning, "Modelio siuntimas nutrauktas.")
+            } catch {
+                append(.error, "Modelio siuntimas nepavyko: \(error.localizedDescription)")
+                phase = .failed
+                statusMessage = "Modelio siuntimas nepavyko."
+            }
+
+            isDownloadingModel = false
+            refreshDependencies()
+        }
+    }
+
+    private func downloadModel(token: CancellationBox) async throws {
+        try FileManager.default.createDirectory(at: AppPaths.modelsDirectory, withIntermediateDirectories: true)
+
+        let target = AppPaths.defaultModelURL
+        let temporary = target.appendingPathExtension("tmp")
+
+        if FileManager.default.fileExists(atPath: target.path),
+           DependencyResolver.isModelComplete(at: target) {
+            settings.modelPath = target.path
+            append(.success, "large-v3 modelis jau yra: \(target.path)")
+            return
+        }
+
+        if FileManager.default.fileExists(atPath: target.path) {
+            append(.warning, "Rastas nepilnas large-v3 modelis. Jis bus pakeistas nauju atsisiuntimu.")
+            try? FileManager.default.removeItem(at: target)
+        }
+
+        append(.info, "large-v3 modelis yra apie 3.1 GB. Siuntimas gali užtrukti.")
+
+        if let hfPath = huggingFaceCLIPath() {
+            append(.info, "Naudojamas oficialus Hugging Face siuntimo įrankis su Xet palaikymu.")
+            try? FileManager.default.removeItem(at: temporary)
+            try? FileManager.default.removeItem(at: temporary.appendingPathExtension("aria2"))
+
+            try await runner.run(
+                executable: "/bin/zsh",
+                arguments: [
+                    "-lc",
+                    "HF_XET_HIGH_PERFORMANCE=1 '\(hfPath)' download ggerganov/whisper.cpp ggml-large-v3.bin --local-dir '\(AppPaths.modelsDirectory.path)' --max-workers 8"
+                ],
+                log: { [weak self] level, message in
+                    self?.append(level, message)
+                },
+                cancellation: { token.isCancelled }
+            )
+        } else {
+            append(.warning, "Hugging Face siuntimo įrankis nerastas, naudojamas lėtesnis curl.")
+            try await runner.run(
+                executable: "/usr/bin/curl",
+                arguments: [
+                    "-L",
+                    "--fail",
+                    "--continue-at",
+                    "-",
+                    "--progress-bar",
+                    "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3.bin",
+                    "-o",
+                    temporary.path
+                ],
+                log: { [weak self] level, message in
+                    self?.append(level, message)
+                },
+                cancellation: { token.isCancelled }
+            )
+
+            if FileManager.default.fileExists(atPath: target.path) {
+                try FileManager.default.removeItem(at: target)
+            }
+            try FileManager.default.moveItem(at: temporary, to: target)
+        }
+
+        guard FileManager.default.fileExists(atPath: target.path),
+              DependencyResolver.isModelComplete(at: target) else {
+            throw PipelineError.commandFailed("Modelio failas neatsirado arba yra nepilnas po siuntimo: \(target.path)")
+        }
+
+        settings.modelPath = target.path
+        append(.success, "large-v3 modelis atsisiųstas: \(target.path)")
+    }
+
+    private func huggingFaceCLIPath() -> String? {
+        let candidates = [
+            "\(NSHomeDirectory())/Library/Python/3.12/bin/hf",
+            "\(NSHomeDirectory())/Library/Python/3.11/bin/hf",
+            "\(NSHomeDirectory())/Library/Python/3.10/bin/hf",
+            "\(NSHomeDirectory())/Library/Python/3.9/bin/hf"
+        ]
+
+        return candidates.first { FileManager.default.isExecutableFile(atPath: $0) }
+    }
+
+    func append(_ level: LogEntry.LogLevel, _ message: String) {
+        logs.append(LogEntry(level: level, message: message))
+        if logs.count > 600 {
+            logs.removeFirst(logs.count - 600)
+        }
+    }
+}
+
+final class CancellationBox {
+    private let lock = NSLock()
+    private var value = false
+
+    var isCancelled: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return value
+    }
+
+    func cancel() {
+        lock.lock()
+        value = true
+        lock.unlock()
+    }
+}
