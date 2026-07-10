@@ -1613,6 +1613,8 @@ private struct AudioInputSelector: View {
 
     private func tint(_ mode: AudioInputMode) -> Color {
         switch mode {
+        case .autoBestTrack:
+            return .cyan
         case .firstTrack:
             return .orange
         case .mixAllTracks:

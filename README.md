@@ -37,6 +37,7 @@ The app includes a first subtitle quality pass after Whisper output:
 For camera files with multiple audio tracks, the app can now prepare better Whisper input:
 
 - use only the first audio track or mix all audio tracks,
+- automatically choose the strongest audio track for multi-track camera files,
 - apply speech-focused filters before Whisper,
 - normalize loudness for speech,
 - reduce steady noise,

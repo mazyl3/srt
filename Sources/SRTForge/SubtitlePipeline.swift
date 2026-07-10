@@ -73,14 +73,21 @@ struct SubtitlePipeline {
         await updatePhase(.converting, 0.32)
         await log(.info, "Garsas konvertuojamas į 16 kHz mono WAV formatą, kurį stabiliai skaito Whisper.")
         let audioStreamCount = Self.audioStreamCount(inputFile: safeInput, ffmpegPath: ffmpegPath)
-        await log(.info, "Rasta audio trackų: \(audioStreamCount). Režimas: \(settings.audioInputMode.rawValue).")
+        let selectedAudioTrack = Self.selectedAudioTrack(
+            inputFile: safeInput,
+            ffmpegPath: ffmpegPath,
+            settings: settings,
+            audioStreamCount: audioStreamCount
+        )
+        await log(.info, "Rasta audio trackų: \(audioStreamCount). Režimas: \(settings.audioInputMode.rawValue). Naudojamas trackas: \(selectedAudioTrack.map(String.init) ?? "mix").")
         try await runner.run(
             executable: ffmpegPath,
             arguments: Self.audioPreparationArguments(
                 inputFile: safeInput,
                 outputFile: preparedAudio,
                 settings: settings,
-                audioStreamCount: audioStreamCount
+                audioStreamCount: audioStreamCount,
+                selectedAudioTrack: selectedAudioTrack
             ),
             log: log,
             cancellation: cancellation
@@ -225,7 +232,8 @@ struct SubtitlePipeline {
         inputFile: URL,
         outputFile: URL,
         settings: AppSettings,
-        audioStreamCount: Int
+        audioStreamCount: Int,
+        selectedAudioTrack: Int?
     ) -> [String] {
         let filter = speechAudioFilter(settings: settings)
         let shouldMix = settings.audioInputMode == .mixAllTracks && audioStreamCount > 1
@@ -250,7 +258,7 @@ struct SubtitlePipeline {
         return [
             "-y",
             "-i", inputFile.path,
-            "-map", "0:a:0",
+            "-map", "0:a:\(selectedAudioTrack ?? 0)",
             "-vn",
             "-af", filter,
             "-ar", "16000",
@@ -259,6 +267,73 @@ struct SubtitlePipeline {
             "-f", "wav",
             outputFile.path
         ]
+    }
+
+    private static func selectedAudioTrack(
+        inputFile: URL,
+        ffmpegPath: String,
+        settings: AppSettings,
+        audioStreamCount: Int
+    ) -> Int? {
+        switch settings.audioInputMode {
+        case .mixAllTracks:
+            return nil
+        case .firstTrack:
+            return 0
+        case .autoBestTrack:
+            guard audioStreamCount > 1 else { return 0 }
+            return bestAudioTrack(inputFile: inputFile, ffmpegPath: ffmpegPath, audioStreamCount: audioStreamCount) ?? 0
+        }
+    }
+
+    private static func bestAudioTrack(inputFile: URL, ffmpegPath: String, audioStreamCount: Int) -> Int? {
+        let candidates = (0..<audioStreamCount).compactMap { index -> AudioTrackScore? in
+            guard let meanVolume = meanVolumeDB(inputFile: inputFile, ffmpegPath: ffmpegPath, audioTrackIndex: index) else {
+                return nil
+            }
+            return AudioTrackScore(index: index, meanVolumeDB: meanVolume)
+        }
+
+        return candidates
+            .sorted { $0.meanVolumeDB > $1.meanVolumeDB }
+            .first?
+            .index
+    }
+
+    private static func meanVolumeDB(inputFile: URL, ffmpegPath: String, audioTrackIndex: Int) -> Double? {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: ffmpegPath)
+        process.arguments = [
+            "-hide_banner",
+            "-t", "30",
+            "-i", inputFile.path,
+            "-map", "0:a:\(audioTrackIndex)",
+            "-af", "volumedetect",
+            "-f", "null",
+            "-"
+        ]
+
+        let outputPipe = Pipe()
+        process.standardOutput = outputPipe
+        process.standardError = outputPipe
+
+        do {
+            try process.run()
+            process.waitUntilExit()
+        } catch {
+            return nil
+        }
+
+        let data = outputPipe.fileHandleForReading.readDataToEndOfFile()
+        let output = String(data: data, encoding: .utf8) ?? ""
+        let pattern = #"mean_volume:\s*(-?\d+(?:\.\d+)?)\s*dB"#
+        guard let regex = try? NSRegularExpression(pattern: pattern),
+              let match = regex.firstMatch(in: output, range: NSRange(output.startIndex..., in: output)),
+              let range = Range(match.range(at: 1), in: output) else {
+            return nil
+        }
+
+        return Double(output[range])
     }
 
     private static func speechAudioFilter(settings: AppSettings) -> String {
@@ -1057,4 +1132,9 @@ private struct SubtitleQualityReport {
             || cpsWarnings > 0
             || remainingCPSWarnings > 0
     }
+}
+
+private struct AudioTrackScore {
+    let index: Int
+    let meanVolumeDB: Double
 }
