@@ -122,7 +122,8 @@ struct SubtitlePipeline {
             guard FileManager.default.fileExists(atPath: lithuanianSRT.path) else {
                 throw PipelineError.commandFailed("Whisper baigė darbą, bet lietuviškas SRT failas nerastas: \(lithuanianSRT.path)")
             }
-            try Self.cleanSRT(at: lithuanianSRT, settings: settings)
+            let report = try Self.cleanSRT(at: lithuanianSRT, settings: settings)
+            await Self.logQualityReport(report, fileName: lithuanianSRT.lastPathComponent, log: log)
             await log(.success, "Lietuviškas SRT sukurtas: \(lithuanianSRT.path)")
         }
 
@@ -154,7 +155,8 @@ struct SubtitlePipeline {
             guard FileManager.default.fileExists(atPath: englishSRT.path) else {
                 throw PipelineError.commandFailed("Whisper baigė vertimą, bet angliškas SRT failas nerastas: \(englishSRT.path)")
             }
-            try Self.cleanSRT(at: englishSRT, settings: settings)
+            let report = try Self.cleanSRT(at: englishSRT, settings: settings)
+            await Self.logQualityReport(report, fileName: englishSRT.lastPathComponent, log: log)
             await log(.success, "Angliškas SRT sukurtas: \(englishSRT.path)")
         }
 
@@ -402,37 +404,62 @@ struct SubtitlePipeline {
         return min(max(value / 100.0, 0.0), 1.0)
     }
 
-    private static func cleanSRT(at url: URL, settings: AppSettings) throws {
+    private static func cleanSRT(at url: URL, settings: AppSettings) throws -> SubtitleQualityReport {
         let content = try String(contentsOf: url, encoding: .utf8)
         let normalized = content
             .replacingOccurrences(of: "\r\n", with: "\n")
             .replacingOccurrences(of: "\r", with: "\n")
 
-        let cleaned = normalized
+        var report = SubtitleQualityReport()
+        let blocks = normalized
             .components(separatedBy: "\n\n")
-            .map { cleanSRTBlock($0, settings: settings) }
-            .filter { !$0.isEmpty }
+            .compactMap { parseSRTBlock($0, settings: settings, report: &report) }
+
+        let splitBlocks = splitBlocksByLineLimit(blocks, settings: settings, report: &report)
+        let repaired = repairSubtitleTiming(splitBlocks, settings: settings, report: &report)
+        let cleaned = repaired
+            .enumerated()
+            .map { index, block in
+                renderSRTBlock(block, number: index + 1)
+            }
             .joined(separator: "\n\n")
             .trimmingCharacters(in: .whitespacesAndNewlines) + "\n"
 
         try cleaned.write(to: url, atomically: true, encoding: .utf8)
+        report.blocks = repaired.count
+        return report
     }
 
-    private static func cleanSRTBlock(_ block: String, settings: AppSettings) -> String {
+    private static func parseSRTBlock(_ block: String, settings: AppSettings, report: inout SubtitleQualityReport) -> SubtitleBlock? {
         let rawLines = block
             .components(separatedBy: "\n")
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
 
         guard let timeIndex = rawLines.firstIndex(where: { $0.contains("-->") }) else {
-            return rawLines.joined(separator: "\n")
+            report.droppedBlocks += 1
+            return nil
         }
 
-        let header = Array(rawLines.prefix(through: timeIndex))
-        let textLines = Array(rawLines.dropFirst(timeIndex + 1))
-        let cleanedText = cleanSubtitleTextLines(textLines, settings: settings)
+        let timing = rawLines[timeIndex]
+        let timingParts = timing.components(separatedBy: "-->")
+        guard timingParts.count == 2,
+              let start = parseSRTTimestamp(timingParts[0]),
+              let end = parseSRTTimestamp(timingParts[1]) else {
+            report.droppedBlocks += 1
+            return nil
+        }
 
-        return (header + cleanedText).joined(separator: "\n")
+        let textLines = Array(rawLines.dropFirst(timeIndex + 1))
+        var cleanedText = cleanSubtitleTextLines(textLines, settings: settings)
+        cleanedText = wrapSubtitleLines(cleanedText, settings: settings, report: &report)
+
+        guard !cleanedText.isEmpty else {
+            report.droppedBlocks += 1
+            return nil
+        }
+
+        return SubtitleBlock(start: start, end: max(end, start), lines: cleanedText)
     }
 
     private static func cleanSubtitleTextLines(_ lines: [String], settings: AppSettings) -> [String] {
@@ -533,7 +560,236 @@ struct SubtitlePipeline {
         return value
     }
 
+    private static func wrapSubtitleLines(_ lines: [String], settings: AppSettings, report: inout SubtitleQualityReport) -> [String] {
+        let maxLength = max(16, settings.maxSubtitleLineLength)
+        let maxLines = max(1, settings.maxSubtitleLines)
+        let normalizedLines = lines.map(normalizeTextSpacing).filter { !$0.isEmpty }
+
+        if normalizedLines.count > maxLines {
+            report.lineWraps += 1
+        }
+
+        let dialogueLines = normalizedLines.filter(isDialogueLine)
+        if !dialogueLines.isEmpty {
+            let wrappedDialogue = dialogueLines.flatMap { line in
+                wrapSingleLine(line, maxLength: maxLength)
+            }
+            if wrappedDialogue.count > maxLines {
+                report.longLineWarnings += 1
+            }
+            return wrappedDialogue
+        }
+
+        let text = normalizedLines.joined(separator: " ")
+        let wrapped = wrapSingleLine(text, maxLength: maxLength)
+        if wrapped.count != normalizedLines.count || wrapped.contains(where: { $0.count > maxLength }) {
+            report.lineWraps += 1
+        }
+        if wrapped.count > maxLines {
+            report.longLineWarnings += 1
+        }
+        return wrapped
+    }
+
+    private static func wrapSingleLine(_ line: String, maxLength: Int) -> [String] {
+        let prefix = isDialogueLine(line) ? "- " : ""
+        let body = prefix.isEmpty ? line : String(line.dropFirst(2))
+        let words = body.split(separator: " ").map(String.init)
+        guard !words.isEmpty else { return [] }
+
+        var lines: [String] = []
+        var current = prefix
+
+        for word in words {
+            let candidate = current == prefix ? current + word : current + " " + word
+            if candidate.count <= maxLength || current == prefix {
+                current = candidate
+            } else {
+                lines.append(current)
+                current = prefix + word
+            }
+        }
+
+        if current != prefix {
+            lines.append(current)
+        }
+
+        return lines
+    }
+
+    private static func splitBlocksByLineLimit(_ blocks: [SubtitleBlock], settings: AppSettings, report: inout SubtitleQualityReport) -> [SubtitleBlock] {
+        let maxLines = max(1, settings.maxSubtitleLines)
+        var result: [SubtitleBlock] = []
+
+        for block in blocks {
+            guard block.lines.count > maxLines else {
+                result.append(block)
+                continue
+            }
+
+            let chunks = stride(from: 0, to: block.lines.count, by: maxLines).map { startIndex in
+                Array(block.lines[startIndex..<min(startIndex + maxLines, block.lines.count)])
+            }
+            let duration = max(0.1, block.end - block.start)
+            let chunkDuration = duration / Double(chunks.count)
+
+            for (index, lines) in chunks.enumerated() {
+                let start = block.start + (Double(index) * chunkDuration)
+                let end = index == chunks.count - 1 ? block.end : start + chunkDuration
+                result.append(SubtitleBlock(start: start, end: end, lines: lines))
+            }
+
+            report.blockSplits += max(0, chunks.count - 1)
+        }
+
+        return result
+    }
+
+    private static func repairSubtitleTiming(_ blocks: [SubtitleBlock], settings: AppSettings, report: inout SubtitleQualityReport) -> [SubtitleBlock] {
+        let sorted = blocks.sorted { $0.start < $1.start }
+        var repaired: [SubtitleBlock] = []
+        let minGap = max(0.02, settings.minimumSubtitleGap)
+        let minDuration = max(0.20, settings.minimumSubtitleDuration)
+        let maxDuration = max(minDuration, settings.maximumSubtitleDuration)
+
+        for block in sorted {
+            var current = block
+            if let previous = repaired.last {
+                let minimumStart = previous.end + minGap
+                if current.start < minimumStart {
+                    report.overlapFixes += 1
+                    current.start = minimumStart
+                }
+            }
+
+            if current.end <= current.start {
+                report.durationFixes += 1
+                current.end = current.start + minDuration
+            }
+
+            let duration = current.end - current.start
+            if duration < minDuration {
+                report.durationFixes += 1
+                current.end = current.start + minDuration
+            } else if duration > maxDuration {
+                report.durationFixes += 1
+                current.end = current.start + maxDuration
+            }
+
+            let cps = charactersPerSecond(current)
+            if cps > settings.maxCharactersPerSecond {
+                report.cpsWarnings += 1
+                let desiredDuration = min(maxDuration, Double(current.characterCount) / max(1, settings.maxCharactersPerSecond))
+                if desiredDuration > current.end - current.start {
+                    current.end = current.start + desiredDuration
+                    report.durationFixes += 1
+                }
+            }
+
+            if let previous = repaired.last,
+               previous.end + minGap > current.start {
+                current.start = previous.end + minGap
+                current.end = max(current.end, current.start + minDuration)
+                report.overlapFixes += 1
+            }
+
+            repaired.append(current)
+        }
+
+        return repaired
+    }
+
+    private static func charactersPerSecond(_ block: SubtitleBlock) -> Double {
+        let duration = max(0.1, block.end - block.start)
+        return Double(block.characterCount) / duration
+    }
+
+    private static func renderSRTBlock(_ block: SubtitleBlock, number: Int) -> String {
+        ([String(number), "\(formatSRTTimestamp(block.start)) --> \(formatSRTTimestamp(block.end))"] + block.lines)
+            .joined(separator: "\n")
+    }
+
+    private static func parseSRTTimestamp(_ raw: String) -> Double? {
+        let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        let pattern = #"(\d{2}):(\d{2}):(\d{2}),(\d{3})"#
+        guard let regex = try? NSRegularExpression(pattern: pattern),
+              let match = regex.firstMatch(in: value, range: NSRange(value.startIndex..., in: value)),
+              match.numberOfRanges == 5 else {
+            return nil
+        }
+
+        func int(_ index: Int) -> Int? {
+            guard let range = Range(match.range(at: index), in: value) else { return nil }
+            return Int(value[range])
+        }
+
+        guard let hours = int(1),
+              let minutes = int(2),
+              let seconds = int(3),
+              let milliseconds = int(4) else {
+            return nil
+        }
+
+        return Double(hours * 3600 + minutes * 60 + seconds) + Double(milliseconds) / 1000.0
+    }
+
+    private static func formatSRTTimestamp(_ value: Double) -> String {
+        let totalMilliseconds = max(0, Int((value * 1000.0).rounded()))
+        let hours = totalMilliseconds / 3_600_000
+        let minutes = (totalMilliseconds % 3_600_000) / 60_000
+        let seconds = (totalMilliseconds % 60_000) / 1000
+        let milliseconds = totalMilliseconds % 1000
+        return String(format: "%02d:%02d:%02d,%03d", hours, minutes, seconds, milliseconds)
+    }
+
+    @MainActor
+    private static func logQualityReport(
+        _ report: SubtitleQualityReport,
+        fileName: String,
+        log: @escaping @MainActor (LogEntry.LogLevel, String) -> Void
+    ) async {
+        let summary = "SRT kokybės patikra \(fileName): \(report.blocks) blokai, \(report.blockSplits) blokų skaidymų, \(report.overlapFixes) laiko persidengimų pataisyta, \(report.durationFixes) trukmių pataisyta, \(report.lineWraps) eilučių pervyniota, \(report.cpsWarnings) per greitų subtitrų įspėjimai."
+        log(report.hasWarnings ? .warning : .success, summary)
+
+        if report.droppedBlocks > 0 {
+            log(.warning, "Pašalinta netinkamų SRT blokų: \(report.droppedBlocks).")
+        }
+        if report.longLineWarnings > 0 {
+            log(.warning, "Yra subtitrų, kuriuos reikėjo skaidyti dėl eilučių ribų: \(report.longLineWarnings).")
+        }
+    }
+
     private static func fileSize(at url: URL) -> Int {
         ((try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize) ?? 0
+    }
+}
+
+private struct SubtitleBlock {
+    var start: Double
+    var end: Double
+    var lines: [String]
+
+    var characterCount: Int {
+        lines.joined(separator: " ").count
+    }
+}
+
+private struct SubtitleQualityReport {
+    var blocks = 0
+    var droppedBlocks = 0
+    var overlapFixes = 0
+    var durationFixes = 0
+    var lineWraps = 0
+    var blockSplits = 0
+    var longLineWarnings = 0
+    var cpsWarnings = 0
+
+    var hasWarnings: Bool {
+        droppedBlocks > 0
+            || overlapFixes > 0
+            || durationFixes > 0
+            || blockSplits > 0
+            || longLineWarnings > 0
+            || cpsWarnings > 0
     }
 }

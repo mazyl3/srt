@@ -201,6 +201,12 @@ struct AppSettings {
     var suppressNonSpeechTokens = true
     var useGPU = true
     var maxSegmentLength = 42
+    var maxSubtitleLineLength = 42
+    var maxSubtitleLines = 2
+    var maxCharactersPerSecond = 20.0
+    var minimumSubtitleDuration = 1.0
+    var maximumSubtitleDuration = 7.0
+    var minimumSubtitleGap = 0.10
     var beamSize = 5
     var bestOf = 5
     var noSpeechThreshold = 0.60

@@ -17,6 +17,18 @@ SRT Forge is a local Mac power tool for subtitle generation:
 - Optionally create a new `.mp4` copy with an internal subtitle track.
 - Check for updates from a small GitHub-hosted manifest.
 
+## SRT Quality Engine
+
+The app includes a first subtitle quality pass after Whisper output:
+
+- rewrites clean SRT numbering,
+- repairs overlapping timestamps,
+- enforces minimum and maximum subtitle duration,
+- keeps a small gap between subtitle blocks,
+- wraps subtitles to readable line lengths,
+- splits blocks that exceed the configured line limit,
+- reports CPS / reading-speed warnings in the log.
+
 ## Modes
 
 ### Paprasta

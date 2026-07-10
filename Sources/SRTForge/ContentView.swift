@@ -1162,6 +1162,41 @@ private struct PowerSettingsPanel: View {
                     }
                 }
 
+                SettingBlock(title: "SRT kokybės taisyklės", help: "Profesionaliam SRT: programa taiso persidengiančius laikus, per trumpus/per ilgus blokus, riboja eilutes ir pažymi per greitai skaitomus subtitrus.") {
+                    VStack(alignment: .leading, spacing: 7) {
+                        Stepper("Eilutės ilgis: \(model.settings.maxSubtitleLineLength)", value: $model.settings.maxSubtitleLineLength, in: 24...56)
+                        Stepper("Eilučių bloke: \(model.settings.maxSubtitleLines)", value: $model.settings.maxSubtitleLines, in: 1...3)
+                        HStack {
+                            Text("CPS")
+                            Slider(value: $model.settings.maxCharactersPerSecond, in: 12...28, step: 1)
+                            Text("\(Int(model.settings.maxCharactersPerSecond))")
+                                .font(.system(size: 11, weight: .regular, design: .monospaced))
+                                .frame(width: 28, alignment: .trailing)
+                        }
+                        HStack {
+                            Text("Min")
+                            Slider(value: $model.settings.minimumSubtitleDuration, in: 0.6...2.0, step: 0.1)
+                            Text(String(format: "%.1fs", model.settings.minimumSubtitleDuration))
+                                .font(.system(size: 11, weight: .regular, design: .monospaced))
+                                .frame(width: 42, alignment: .trailing)
+                        }
+                        HStack {
+                            Text("Max")
+                            Slider(value: $model.settings.maximumSubtitleDuration, in: 3.0...10.0, step: 0.5)
+                            Text(String(format: "%.1fs", model.settings.maximumSubtitleDuration))
+                                .font(.system(size: 11, weight: .regular, design: .monospaced))
+                                .frame(width: 42, alignment: .trailing)
+                        }
+                        HStack {
+                            Text("Tarpas")
+                            Slider(value: $model.settings.minimumSubtitleGap, in: 0.02...0.30, step: 0.01)
+                            Text("\(Int(model.settings.minimumSubtitleGap * 1000))ms")
+                                .font(.system(size: 11, weight: .regular, design: .monospaced))
+                                .frame(width: 48, alignment: .trailing)
+                        }
+                    }
+                }
+
                 SettingBlock(title: "Atpažinimo tikslumas", help: "Beam ir best-of didina paiešką. Aukštesnis no-speech slenkstis agresyviau ignoruoja tylą.") {
                     VStack(alignment: .leading) {
                         Stepper("Beam: \(model.settings.beamSize)", value: $model.settings.beamSize, in: 1...10)
