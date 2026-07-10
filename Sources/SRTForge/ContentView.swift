@@ -1276,6 +1276,14 @@ private struct PowerSettingsPanel: View {
                     }
                 }
 
+                SettingBlock(title: "Garso atpažinimo kokybė", help: "Jei kamera turi kelis audio trackus, pirmas trackas gali būti netinkamas. „Mix all“ sumaišo visus mikrofonus, o kalbos filtrai normalizuoja garsumą ir mažina triukšmą prieš Whisper.") {
+                    VStack(alignment: .leading, spacing: 9) {
+                        AudioInputSelector()
+                        Toggle("Kalbos garso filtrai", isOn: $model.settings.enhanceSpeechAudio)
+                        Toggle("Whisper kalbos promptas", isOn: $model.settings.useWhisperLanguagePrompt)
+                    }
+                }
+
                 SettingBlock(title: "Subtitrų išvestis", help: "Pasirink, kokius SRT failus reikia sukurti: tik lietuvišką, tik anglišką arba abu.") {
                     VStack(alignment: .leading) {
                         SubtitleOutputSelector()
@@ -1571,6 +1579,43 @@ private struct VideoExportSelector: View {
         case .videoOnly:
             return .orange
         case .srtAndVideo:
+            return .green
+        }
+    }
+}
+
+private struct AudioInputSelector: View {
+    @EnvironmentObject private var model: AppModel
+
+    var body: some View {
+        HStack(spacing: 7) {
+            ForEach(AudioInputMode.allCases) { mode in
+                Button {
+                    model.settings.audioInputMode = mode
+                } label: {
+                    VStack(spacing: 2) {
+                        HStack(spacing: 5) {
+                            Text(mode.rawValue)
+                                .font(.system(size: 12, weight: .bold))
+                            HelpTip(title: mode.rawValue, message: mode.explanation)
+                        }
+                        Text(mode.subtitle)
+                            .font(.system(size: 9, weight: .semibold))
+                            .opacity(0.72)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 7)
+                }
+                .buttonStyle(ModeButtonStyle(isSelected: model.settings.audioInputMode == mode, tint: tint(mode)))
+            }
+        }
+    }
+
+    private func tint(_ mode: AudioInputMode) -> Color {
+        switch mode {
+        case .firstTrack:
+            return .orange
+        case .mixAllTracks:
             return .green
         }
     }

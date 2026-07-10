@@ -100,6 +100,31 @@ enum VideoExportMode: String, CaseIterable, Identifiable {
     }
 }
 
+enum AudioInputMode: String, CaseIterable, Identifiable {
+    case firstTrack = "1 track"
+    case mixAllTracks = "Mix all"
+
+    var id: String { rawValue }
+
+    var subtitle: String {
+        switch self {
+        case .firstTrack:
+            return "pirmas"
+        case .mixAllTracks:
+            return "visi"
+        }
+    }
+
+    var explanation: String {
+        switch self {
+        case .firstTrack:
+            return "Naudoja tik pirmą audio tracką. Tinka paprastiems video arba kai pirmas trackas tikrai yra pagrindinis mikrofonas."
+        case .mixAllTracks:
+            return "Sumaišo visus audio trackus į vieną kalbos takelį. Tai geriau kamerų failams su keliais mono mikrofonais, kai neaišku, kuriame tracke yra geriausia kalba."
+        }
+    }
+}
+
 enum BurnedSubtitleStyle: String, CaseIterable, Identifiable {
     case clean = "Clean"
     case bold = "Bold"
@@ -195,6 +220,9 @@ struct AppSettings {
     var videoExportMode: VideoExportMode = .srtOnly
     var burnedSubtitleStyle: BurnedSubtitleStyle = .clean
     var keepWorkingFiles = false
+    var audioInputMode: AudioInputMode = .mixAllTracks
+    var enhanceSpeechAudio = true
+    var useWhisperLanguagePrompt = true
     var splitOnWord = true
     var normalizePunctuation = true
     var formatDialogueLines = true

@@ -72,20 +72,16 @@ struct SubtitlePipeline {
 
         await updatePhase(.converting, 0.32)
         await log(.info, "Garsas konvertuojamas į 16 kHz mono WAV formatą, kurį stabiliai skaito Whisper.")
+        let audioStreamCount = Self.audioStreamCount(inputFile: safeInput, ffmpegPath: ffmpegPath)
+        await log(.info, "Rasta audio trackų: \(audioStreamCount). Režimas: \(settings.audioInputMode.rawValue).")
         try await runner.run(
             executable: ffmpegPath,
-            arguments: [
-                "-y",
-                "-i", safeInput.path,
-                "-map", "0:a:0",
-                "-vn",
-                "-ar", "16000",
-                "-ac", "1",
-                "-c:a", "pcm_s16le",
-                "-bitexact",
-                "-f", "wav",
-                preparedAudio.path
-            ],
+            arguments: Self.audioPreparationArguments(
+                inputFile: safeInput,
+                outputFile: preparedAudio,
+                settings: settings,
+                audioStreamCount: audioStreamCount
+            ),
             log: log,
             cancellation: cancellation
         )
@@ -223,6 +219,114 @@ struct SubtitlePipeline {
         let visibleSRTs = createdSRTs
         let primary = createdVideo ?? (wantsLithuanian ? lithuanianSRT : englishSRT)
         return PipelineResult(primaryFile: primary, srtFiles: visibleSRTs, videoFile: createdVideo)
+    }
+
+    private static func audioPreparationArguments(
+        inputFile: URL,
+        outputFile: URL,
+        settings: AppSettings,
+        audioStreamCount: Int
+    ) -> [String] {
+        let filter = speechAudioFilter(settings: settings)
+        let shouldMix = settings.audioInputMode == .mixAllTracks && audioStreamCount > 1
+
+        if shouldMix {
+            let inputs = (0..<audioStreamCount).map { "[0:a:\($0)]" }.joined()
+            let filterComplex = "\(inputs)amix=inputs=\(audioStreamCount):duration=longest:normalize=1,\(filter)[outa]"
+            return [
+                "-y",
+                "-i", inputFile.path,
+                "-filter_complex", filterComplex,
+                "-map", "[outa]",
+                "-vn",
+                "-ar", "16000",
+                "-ac", "1",
+                "-c:a", "pcm_s16le",
+                "-f", "wav",
+                outputFile.path
+            ]
+        }
+
+        return [
+            "-y",
+            "-i", inputFile.path,
+            "-map", "0:a:0",
+            "-vn",
+            "-af", filter,
+            "-ar", "16000",
+            "-ac", "1",
+            "-c:a", "pcm_s16le",
+            "-f", "wav",
+            outputFile.path
+        ]
+    }
+
+    private static func speechAudioFilter(settings: AppSettings) -> String {
+        guard settings.enhanceSpeechAudio else {
+            return "aresample=16000"
+        }
+
+        return [
+            "highpass=f=80",
+            "lowpass=f=7600",
+            "afftdn=nr=10:nf=-45",
+            "loudnorm=I=-18:LRA=11:TP=-1.5",
+            "aresample=16000"
+        ].joined(separator: ",")
+    }
+
+    private static func audioStreamCount(inputFile: URL, ffmpegPath: String) -> Int {
+        let ffprobePath = ffprobePath(for: ffmpegPath)
+        guard FileManager.default.isExecutableFile(atPath: ffprobePath) else {
+            return 1
+        }
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: ffprobePath)
+        process.arguments = [
+            "-v", "error",
+            "-select_streams", "a",
+            "-show_entries", "stream=index",
+            "-of", "csv=p=0",
+            inputFile.path
+        ]
+
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = Pipe()
+
+        do {
+            try process.run()
+            process.waitUntilExit()
+        } catch {
+            return 1
+        }
+
+        guard process.terminationStatus == 0 else {
+            return 1
+        }
+
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        let output = String(data: data, encoding: .utf8) ?? ""
+        let count = output
+            .split(whereSeparator: \.isNewline)
+            .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .count
+        return max(1, count)
+    }
+
+    private static func ffprobePath(for ffmpegPath: String) -> String {
+        let url = URL(fileURLWithPath: ffmpegPath)
+        if ffmpegPath != "auto", !url.deletingLastPathComponent().path.isEmpty {
+            return url.deletingLastPathComponent().appendingPathComponent("ffprobe").path
+        }
+        if FileManager.default.isExecutableFile(atPath: "/opt/homebrew/bin/ffprobe") {
+            return "/opt/homebrew/bin/ffprobe"
+        }
+        if FileManager.default.isExecutableFile(atPath: "/usr/local/bin/ffprobe") {
+            return "/usr/local/bin/ffprobe"
+        }
+        return "/usr/bin/ffprobe"
     }
 
     private static func createVideoWithSubtitleTrack(
@@ -387,7 +491,30 @@ struct SubtitlePipeline {
             arguments.append("-tr")
         }
 
+        if settings.useWhisperLanguagePrompt, let prompt = whisperPrompt(languageCode: languageCode, translateToEnglish: translateToEnglish) {
+            arguments.append("--prompt")
+            arguments.append(prompt)
+            arguments.append("--carry-initial-prompt")
+        }
+
         return arguments
+    }
+
+    private static func whisperPrompt(languageCode: String, translateToEnglish: Bool) -> String? {
+        if translateToEnglish {
+            return "Clear speech transcription translated into natural English subtitles with punctuation."
+        }
+
+        switch languageCode.lowercased() {
+        case "lt":
+            return "Aiški lietuvių kalba. Tvarkinga transkripcija su lietuviška skyryba, sakiniais ir dialogais."
+        case "en":
+            return "Clear English speech transcription with punctuation and readable subtitle sentences."
+        case "auto":
+            return nil
+        default:
+            return "Clear speech transcription with punctuation and readable subtitle sentences."
+        }
     }
 
     private static func parseWhisperProgress(from text: String) -> Double? {

@@ -1,7 +1,7 @@
 {
   "version": "1.0.0",
-  "build": "103",
+  "build": "104",
   "downloadURL": "https://github.com/mazyl3/srt/releases/download/v1.0.0/SRT-Forge-Setup.dmg",
-  "releaseNotes": "Version 1.0.0 build 103: adds in-app SRT QA panel after export, improved SRT Quality Engine with sentence-aware splitting, balanced two-line wrapping, smarter overlap repair, CPS warnings, Lithuanian/English subtitle output, MP4 subtitle-track export, offline setup flow, and GitHub update checking.",
+  "releaseNotes": "Version 1.0.0 build 104: improves Whisper input quality with multi-track audio mixing, speech-focused audio filters, language prompts, in-app SRT QA panel, SRT Quality Engine, Lithuanian/English subtitle output, MP4 subtitle-track export, offline setup flow, and GitHub update checking.",
   "minimumSystemVersion": "13.0"
 }

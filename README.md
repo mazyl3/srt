@@ -32,6 +32,16 @@ The app includes a first subtitle quality pass after Whisper output:
 - reports CPS / reading-speed warnings in the log.
 - shows an in-app SRT QA panel after export with block count, timing, CPS, line-length, and duration signals.
 
+## Recognition Quality
+
+For camera files with multiple audio tracks, the app can now prepare better Whisper input:
+
+- use only the first audio track or mix all audio tracks,
+- apply speech-focused filters before Whisper,
+- normalize loudness for speech,
+- reduce steady noise,
+- pass a language prompt to Whisper for better Lithuanian/English context.
+
 ## Modes
 
 ### Paprasta
