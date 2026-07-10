@@ -8,6 +8,8 @@ final class AppModel: ObservableObject {
     @Published var resultFile: URL?
     @Published var resultFiles: [URL] = []
     @Published var qualityReport: SRTQAReport?
+    @Published var audioDiagnosticReport: AudioDiagnosticReport?
+    @Published var isAnalyzingAudio = false
     @Published var jobs: [TranscriptionJob] = []
     @Published var deviceProfile = DeviceProfiler.current()
     @Published var maxParallelJobs = DeviceProfiler.current().recommendedParallelJobs
@@ -220,6 +222,7 @@ final class AppModel: ObservableObject {
         resultFile = nil
         resultFiles = []
         qualityReport = nil
+        audioDiagnosticReport = nil
         phase = .idle
         progress = 0
         statusMessage = files.count == 1
@@ -229,6 +232,8 @@ final class AppModel: ObservableObject {
         for url in files {
             append(.info, "Pasirinktas failas: \(url.path)")
         }
+
+        analyzeSelectedAudioIfPossible()
     }
 
     func selectOutputFolder() {
@@ -726,6 +731,43 @@ final class AppModel: ObservableObject {
         return report
     }
 
+    private func analyzeSelectedAudioIfPossible() {
+        guard let selectedFile else { return }
+        let report = DependencyResolver.report(settings: settings)
+        guard case .ready(let ffmpegPath) = report.ffmpeg else { return }
+        let ffprobePath = Self.ffprobePath(for: ffmpegPath)
+        guard FileManager.default.isExecutableFile(atPath: ffprobePath) else { return }
+
+        isAnalyzingAudio = true
+        let file = selectedFile
+
+        Task.detached {
+            let diagnostic = AudioDiagnosticAnalyzer.analyze(file: file, ffmpegPath: ffmpegPath, ffprobePath: ffprobePath)
+
+            await MainActor.run {
+                self.audioDiagnosticReport = diagnostic
+                self.isAnalyzingAudio = false
+                if !diagnostic.tracks.isEmpty {
+                    self.append(.info, "Audio diagnostika: \(diagnostic.title). \(diagnostic.detail)")
+                }
+            }
+        }
+    }
+
+    private static func ffprobePath(for ffmpegPath: String) -> String {
+        let url = URL(fileURLWithPath: ffmpegPath)
+        if ffmpegPath != "auto", !url.deletingLastPathComponent().path.isEmpty {
+            return url.deletingLastPathComponent().appendingPathComponent("ffprobe").path
+        }
+        if FileManager.default.isExecutableFile(atPath: "/opt/homebrew/bin/ffprobe") {
+            return "/opt/homebrew/bin/ffprobe"
+        }
+        if FileManager.default.isExecutableFile(atPath: "/usr/local/bin/ffprobe") {
+            return "/usr/local/bin/ffprobe"
+        }
+        return "/usr/bin/ffprobe"
+    }
+
     private static func parseSRTTimestamp(_ raw: String) -> Double? {
         let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         let pattern = #"(\d{2}):(\d{2}):(\d{2}),(\d{3})"#
@@ -978,5 +1020,107 @@ final class CancellationBox {
         lock.lock()
         value = true
         lock.unlock()
+    }
+}
+
+private enum AudioDiagnosticAnalyzer {
+    static func analyze(file: URL, ffmpegPath: String, ffprobePath: String) -> AudioDiagnosticReport {
+        var report = readAudioDiagnostics(file: file, ffprobePath: ffprobePath)
+        for index in report.tracks.indices {
+            report.tracks[index].meanVolumeDB = meanVolumeDB(
+                file: file,
+                ffmpegPath: ffmpegPath,
+                audioTrackIndex: report.tracks[index].audioPosition
+            )
+        }
+        report.recommendedTrack = report.tracks
+            .compactMap { track -> (Int, Double)? in
+                guard let mean = track.meanVolumeDB else { return nil }
+                return (track.audioPosition, mean)
+            }
+            .sorted { $0.1 > $1.1 }
+            .first?
+            .0
+        return report
+    }
+
+    private static func readAudioDiagnostics(file: URL, ffprobePath: String) -> AudioDiagnosticReport {
+        var report = AudioDiagnosticReport(fileName: file.lastPathComponent)
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: ffprobePath)
+        process.arguments = [
+            "-v", "error",
+            "-select_streams", "a",
+            "-show_entries", "stream=index,codec_name,channels,sample_rate",
+            "-of", "csv=p=0",
+            file.path
+        ]
+
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = Pipe()
+
+        do {
+            try process.run()
+            process.waitUntilExit()
+        } catch {
+            return report
+        }
+
+        guard process.terminationStatus == 0 else { return report }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        let output = String(data: data, encoding: .utf8) ?? ""
+
+        report.tracks = output
+            .split(whereSeparator: \.isNewline)
+            .enumerated()
+            .compactMap { line -> AudioTrackDiagnostic? in
+                let parts = line.element.split(separator: ",").map(String.init)
+                guard parts.count >= 4, let index = Int(parts[0]) else { return nil }
+                return AudioTrackDiagnostic(
+                    streamIndex: index,
+                    audioPosition: line.offset,
+                    codec: parts[1],
+                    channels: Int(parts[3]) ?? 0,
+                    sampleRate: parts[2],
+                    meanVolumeDB: nil
+                )
+            }
+        return report
+    }
+
+    private static func meanVolumeDB(file: URL, ffmpegPath: String, audioTrackIndex: Int) -> Double? {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: ffmpegPath)
+        process.arguments = [
+            "-hide_banner",
+            "-t", "10",
+            "-i", file.path,
+            "-map", "0:a:\(audioTrackIndex)",
+            "-af", "volumedetect",
+            "-f", "null",
+            "-"
+        ]
+
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = pipe
+
+        do {
+            try process.run()
+            process.waitUntilExit()
+        } catch {
+            return nil
+        }
+
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        let output = String(data: data, encoding: .utf8) ?? ""
+        let pattern = #"mean_volume:\s*(-?\d+(?:\.\d+)?)\s*dB"#
+        guard let regex = try? NSRegularExpression(pattern: pattern),
+              let match = regex.firstMatch(in: output, range: NSRange(output.startIndex..., in: output)),
+              let range = Range(match.range(at: 1), in: output) else {
+            return nil
+        }
+        return Double(output[range])
     }
 }

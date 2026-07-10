@@ -312,6 +312,44 @@ struct SRTQAFileReport: Identifiable, Equatable {
     }
 }
 
+struct AudioDiagnosticReport: Equatable {
+    let fileName: String
+    var tracks: [AudioTrackDiagnostic] = []
+    var recommendedTrack: Int?
+
+    var title: String {
+        if tracks.isEmpty {
+            return "Audio trackų nerasta"
+        }
+        if tracks.count == 1 {
+            return "1 audio trackas"
+        }
+        return "\(tracks.count) audio trackai"
+    }
+
+    var detail: String {
+        if let recommendedTrack {
+            return "Auto best rekomenduoja Track \(recommendedTrack + 1)."
+        }
+        return "Naudok Mix all arba pasirink pirmą tracką."
+    }
+}
+
+struct AudioTrackDiagnostic: Identifiable, Equatable {
+    let id = UUID()
+    let streamIndex: Int
+    let audioPosition: Int
+    var codec: String = "audio"
+    var channels: Int = 0
+    var sampleRate: String = ""
+    var meanVolumeDB: Double?
+
+    var meanVolumeLabel: String {
+        guard let meanVolumeDB else { return "n/a" }
+        return String(format: "%.1f dB", meanVolumeDB)
+    }
+}
+
 enum JobState: String {
     case waiting = "Laukia"
     case running = "Vyksta"

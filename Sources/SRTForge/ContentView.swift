@@ -1284,6 +1284,8 @@ private struct PowerSettingsPanel: View {
                     }
                 }
 
+                AudioDiagnosticsBlock()
+
                 SettingBlock(title: "Subtitrų išvestis", help: "Pasirink, kokius SRT failus reikia sukurti: tik lietuvišką, tik anglišką arba abu.") {
                     VStack(alignment: .leading) {
                         SubtitleOutputSelector()
@@ -1620,6 +1622,89 @@ private struct AudioInputSelector: View {
         case .mixAllTracks:
             return .green
         }
+    }
+}
+
+private struct AudioDiagnosticsBlock: View {
+    @EnvironmentObject private var model: AppModel
+
+    var body: some View {
+        SettingBlock(title: "Audio track diagnostika", help: "Parodo, kiek audio trackų turi failas ir kuris trackas pagal garso lygį atrodo stipriausias. Tai padeda suprasti, kodėl Whisper gali blogai atpažinti tekstą.") {
+            VStack(alignment: .leading, spacing: 9) {
+                if model.isAnalyzingAudio {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                            .scaleEffect(0.65)
+                        Text("Tikrinami audio trackai...")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(.white.opacity(0.62))
+                    }
+                } else if let report = model.audioDiagnosticReport {
+                    HStack {
+                        Text(report.title)
+                            .font(.system(size: 12, weight: .bold))
+                        Spacer()
+                        Text(report.detail)
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(.cyan)
+                            .lineLimit(1)
+                    }
+
+                    VStack(spacing: 6) {
+                        ForEach(report.tracks) { track in
+                            AudioTrackRow(track: track, recommended: report.recommendedTrack == track.audioPosition)
+                        }
+                    }
+                } else {
+                    Text("Pasirink video/audio failą. Trackai bus patikrinti automatiškai.")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.56))
+                }
+            }
+        }
+    }
+}
+
+private struct AudioTrackRow: View {
+    let track: AudioTrackDiagnostic
+    let recommended: Bool
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: recommended ? "checkmark.seal.fill" : "waveform")
+                .font(.system(size: 12, weight: .bold))
+                .foregroundStyle(recommended ? .green : .white.opacity(0.48))
+                .frame(width: 18)
+            Text("Track \(track.audioPosition + 1)")
+                .font(.system(size: 11, weight: .bold, design: .monospaced))
+                .frame(width: 58, alignment: .leading)
+            Text("#\(track.streamIndex)")
+                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                .foregroundStyle(.white.opacity(0.42))
+                .frame(width: 28, alignment: .leading)
+            Text(track.codec)
+                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                .foregroundStyle(.white.opacity(0.52))
+                .lineLimit(1)
+            Spacer()
+            Text("\(track.channels)ch")
+                .font(.system(size: 10, weight: .bold, design: .monospaced))
+                .foregroundStyle(.white.opacity(0.52))
+            Text(track.sampleRate)
+                .font(.system(size: 10, weight: .bold, design: .monospaced))
+                .foregroundStyle(.white.opacity(0.52))
+            Text(track.meanVolumeLabel)
+                .font(.system(size: 10, weight: .bold, design: .monospaced))
+                .foregroundStyle(recommended ? .green : .orange.opacity(0.9))
+                .frame(width: 70, alignment: .trailing)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill((recommended ? Color.green : Color.white).opacity(recommended ? 0.10 : 0.055))
+                .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder((recommended ? Color.green : Color.white).opacity(0.12), lineWidth: 1))
+        )
     }
 }
 
