@@ -27,6 +27,8 @@ The app includes a first subtitle quality pass after Whisper output:
 - keeps a small gap between subtitle blocks,
 - wraps subtitles to readable line lengths,
 - splits blocks that exceed the configured line limit,
+- splits long text on sentence/phrase boundaries when possible,
+- balances two-line subtitles for better readability,
 - reports CPS / reading-speed warnings in the log.
 
 ## Modes

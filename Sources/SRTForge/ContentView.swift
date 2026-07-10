@@ -1157,6 +1157,7 @@ private struct PowerSettingsPanel: View {
                     VStack(alignment: .leading) {
                         Stepper("Maks. simbolių: \(model.settings.maxSegmentLength)", value: $model.settings.maxSegmentLength, in: 24...96)
                         Toggle("Skaidyti per žodžius", isOn: $model.settings.splitOnWord)
+                        Toggle("Skaidyti per sakinius", isOn: $model.settings.splitOnSentenceBoundaries)
                         Toggle("Baigti sakinius skyryba", isOn: $model.settings.normalizePunctuation)
                         Toggle("Tvarkyti dialogo brūkšnius", isOn: $model.settings.formatDialogueLines)
                     }

@@ -198,6 +198,7 @@ struct AppSettings {
     var splitOnWord = true
     var normalizePunctuation = true
     var formatDialogueLines = true
+    var splitOnSentenceBoundaries = true
     var suppressNonSpeechTokens = true
     var useGPU = true
     var maxSegmentLength = 42
