@@ -170,6 +170,12 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func selectManualAudioTrack(_ track: AudioTrackDiagnostic) {
+        settings.audioInputMode = .manualTrack
+        settings.manualAudioTrackPosition = track.audioPosition
+        append(.info, "Rankiniu būdu pasirinktas audio Track \(track.audioPosition + 1) Whisper atpažinimui.")
+    }
+
     var maxHardwareParallelJobs: Int {
         max(1, min(4, max(deviceProfile.recommendedParallelJobs, deviceProfile.memoryGB / 8)))
     }

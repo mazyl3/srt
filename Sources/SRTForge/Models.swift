@@ -103,6 +103,7 @@ enum VideoExportMode: String, CaseIterable, Identifiable {
 enum AudioInputMode: String, CaseIterable, Identifiable {
     case autoBestTrack = "Auto best"
     case firstTrack = "1 track"
+    case manualTrack = "Manual"
     case mixAllTracks = "Mix all"
 
     var id: String { rawValue }
@@ -113,6 +114,8 @@ enum AudioInputMode: String, CaseIterable, Identifiable {
             return "parenka"
         case .firstTrack:
             return "pirmas"
+        case .manualTrack:
+            return "rankinis"
         case .mixAllTracks:
             return "visi"
         }
@@ -124,6 +127,8 @@ enum AudioInputMode: String, CaseIterable, Identifiable {
             return "Greitai patikrina audio trackus ir parenka stipriausią kalbos signalą Whisper atpažinimui. Geriausias numatytas režimas kamerų failams."
         case .firstTrack:
             return "Naudoja tik pirmą audio tracką. Tinka paprastiems video arba kai pirmas trackas tikrai yra pagrindinis mikrofonas."
+        case .manualTrack:
+            return "Naudoja konkretų tracką, kurį pasirenki audio diagnostikos lentelėje. Naudok, kai žinai, kuriame mikrofone kalba švariausia."
         case .mixAllTracks:
             return "Sumaišo visus audio trackus į vieną kalbos takelį. Tai geriau kamerų failams su keliais mono mikrofonais, kai neaišku, kuriame tracke yra geriausia kalba."
         }
@@ -226,6 +231,7 @@ struct AppSettings {
     var burnedSubtitleStyle: BurnedSubtitleStyle = .clean
     var keepWorkingFiles = false
     var audioInputMode: AudioInputMode = .autoBestTrack
+    var manualAudioTrackPosition: Int?
     var enhanceSpeechAudio = true
     var useWhisperLanguagePrompt = true
     var splitOnWord = true

@@ -1619,6 +1619,8 @@ private struct AudioInputSelector: View {
             return .cyan
         case .firstTrack:
             return .orange
+        case .manualTrack:
+            return .pink
         case .mixAllTracks:
             return .green
         }
@@ -1650,9 +1652,19 @@ private struct AudioDiagnosticsBlock: View {
                             .lineLimit(1)
                     }
 
+                    Text("Paspausk track eilutę, jei nori priverstinai naudoti konkretų mikrofoną.")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.50))
+
                     VStack(spacing: 6) {
                         ForEach(report.tracks) { track in
-                            AudioTrackRow(track: track, recommended: report.recommendedTrack == track.audioPosition)
+                            AudioTrackRow(
+                                track: track,
+                                recommended: report.recommendedTrack == track.audioPosition,
+                                selected: model.settings.audioInputMode == .manualTrack && model.settings.manualAudioTrackPosition == track.audioPosition
+                            ) {
+                                model.selectManualAudioTrack(track)
+                            }
                         }
                     }
                 } else {
@@ -1668,42 +1680,52 @@ private struct AudioDiagnosticsBlock: View {
 private struct AudioTrackRow: View {
     let track: AudioTrackDiagnostic
     let recommended: Bool
+    let selected: Bool
+    let select: () -> Void
 
     var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: recommended ? "checkmark.seal.fill" : "waveform")
-                .font(.system(size: 12, weight: .bold))
-                .foregroundStyle(recommended ? .green : .white.opacity(0.48))
-                .frame(width: 18)
-            Text("Track \(track.audioPosition + 1)")
-                .font(.system(size: 11, weight: .bold, design: .monospaced))
-                .frame(width: 58, alignment: .leading)
-            Text("#\(track.streamIndex)")
-                .font(.system(size: 10, weight: .medium, design: .monospaced))
-                .foregroundStyle(.white.opacity(0.42))
-                .frame(width: 28, alignment: .leading)
-            Text(track.codec)
-                .font(.system(size: 10, weight: .medium, design: .monospaced))
-                .foregroundStyle(.white.opacity(0.52))
-                .lineLimit(1)
-            Spacer()
-            Text("\(track.channels)ch")
-                .font(.system(size: 10, weight: .bold, design: .monospaced))
-                .foregroundStyle(.white.opacity(0.52))
-            Text(track.sampleRate)
-                .font(.system(size: 10, weight: .bold, design: .monospaced))
-                .foregroundStyle(.white.opacity(0.52))
-            Text(track.meanVolumeLabel)
-                .font(.system(size: 10, weight: .bold, design: .monospaced))
-                .foregroundStyle(recommended ? .green : .orange.opacity(0.9))
-                .frame(width: 70, alignment: .trailing)
+        Button(action: select) {
+            HStack(spacing: 8) {
+                Image(systemName: selected ? "dot.radiowaves.left.and.right" : recommended ? "checkmark.seal.fill" : "waveform")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(selected ? .pink : recommended ? .green : .white.opacity(0.48))
+                    .frame(width: 18)
+                Text("Track \(track.audioPosition + 1)")
+                    .font(.system(size: 11, weight: .bold, design: .monospaced))
+                    .frame(width: 58, alignment: .leading)
+                Text("#\(track.streamIndex)")
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .foregroundStyle(.white.opacity(0.42))
+                    .frame(width: 28, alignment: .leading)
+                Text(track.codec)
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .foregroundStyle(.white.opacity(0.52))
+                    .lineLimit(1)
+                Spacer()
+                if selected {
+                    Text("USE")
+                        .font(.system(size: 9, weight: .black, design: .monospaced))
+                        .foregroundStyle(.pink)
+                }
+                Text("\(track.channels)ch")
+                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                    .foregroundStyle(.white.opacity(0.52))
+                Text(track.sampleRate)
+                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                    .foregroundStyle(.white.opacity(0.52))
+                Text(track.meanVolumeLabel)
+                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                    .foregroundStyle(selected ? .pink : recommended ? .green : .orange.opacity(0.9))
+                    .frame(width: 70, alignment: .trailing)
+            }
         }
+        .buttonStyle(.plain)
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
         .background(
             RoundedRectangle(cornerRadius: 6)
-                .fill((recommended ? Color.green : Color.white).opacity(recommended ? 0.10 : 0.055))
-                .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder((recommended ? Color.green : Color.white).opacity(0.12), lineWidth: 1))
+                .fill((selected ? Color.pink : recommended ? Color.green : Color.white).opacity(selected ? 0.14 : recommended ? 0.10 : 0.055))
+                .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder((selected ? Color.pink : recommended ? Color.green : Color.white).opacity(selected ? 0.36 : 0.12), lineWidth: 1))
         )
     }
 }

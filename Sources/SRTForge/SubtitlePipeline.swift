@@ -79,7 +79,7 @@ struct SubtitlePipeline {
             settings: settings,
             audioStreamCount: audioStreamCount
         )
-        await log(.info, "Rasta audio trackų: \(audioStreamCount). Režimas: \(settings.audioInputMode.rawValue). Naudojamas trackas: \(selectedAudioTrack.map(String.init) ?? "mix").")
+        await log(.info, "Rasta audio trackų: \(audioStreamCount). Režimas: \(settings.audioInputMode.rawValue). Naudojamas trackas: \(selectedAudioTrack.map { String($0 + 1) } ?? "mix").")
         try await runner.run(
             executable: ffmpegPath,
             arguments: Self.audioPreparationArguments(
@@ -280,6 +280,9 @@ struct SubtitlePipeline {
             return nil
         case .firstTrack:
             return 0
+        case .manualTrack:
+            guard let manual = settings.manualAudioTrackPosition else { return 0 }
+            return min(max(0, manual), max(0, audioStreamCount - 1))
         case .autoBestTrack:
             guard audioStreamCount > 1 else { return 0 }
             return bestAudioTrack(inputFile: inputFile, ffmpegPath: ffmpegPath, audioStreamCount: audioStreamCount) ?? 0
