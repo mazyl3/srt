@@ -7,6 +7,7 @@ final class AppModel: ObservableObject {
     @Published var selectedFile: URL?
     @Published var resultFile: URL?
     @Published var resultFiles: [URL] = []
+    @Published var qualityReport: SRTQAReport?
     @Published var jobs: [TranscriptionJob] = []
     @Published var deviceProfile = DeviceProfiler.current()
     @Published var maxParallelJobs = DeviceProfiler.current().recommendedParallelJobs
@@ -218,6 +219,7 @@ final class AppModel: ObservableObject {
         jobs = files.map { TranscriptionJob(inputFile: $0) }
         resultFile = nil
         resultFiles = []
+        qualityReport = nil
         phase = .idle
         progress = 0
         statusMessage = files.count == 1
@@ -304,6 +306,7 @@ final class AppModel: ObservableObject {
         isRunning = true
         resultFile = nil
         resultFiles = []
+        qualityReport = nil
         logs.removeAll()
         append(.info, "Darbas pradėtas.")
 
@@ -331,6 +334,7 @@ final class AppModel: ObservableObject {
 
                 resultFile = result.primaryFile
                 resultFiles = result.allFiles
+                qualityReport = analyzeSRTFiles(result.srtFiles, settings: localSettings)
                 phase = .complete
                 progress = 1
                 statusMessage = completionMessage(for: result)
@@ -370,6 +374,7 @@ final class AppModel: ObservableObject {
         isRunning = true
         resultFile = nil
         resultFiles = []
+        qualityReport = nil
         phase = .validating
         progress = 0
         logs.removeAll()
@@ -644,6 +649,105 @@ final class AppModel: ObservableObject {
             return "SRT failai sukurti."
         }
         return "SRT failas sukurtas."
+    }
+
+    private func analyzeSRTFiles(_ files: [URL], settings: AppSettings) -> SRTQAReport? {
+        let reports = files
+            .filter { $0.pathExtension.lowercased() == "srt" }
+            .map { analyzeSRTFile($0, settings: settings) }
+
+        guard !reports.isEmpty else { return nil }
+        return SRTQAReport(files: reports)
+    }
+
+    private func analyzeSRTFile(_ url: URL, settings: AppSettings) -> SRTQAFileReport {
+        var report = SRTQAFileReport(fileName: url.lastPathComponent)
+        guard let content = try? String(contentsOf: url, encoding: .utf8) else {
+            report.invalidBlocks = 1
+            return report
+        }
+
+        let normalized = content
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+
+        var previousEnd: Double?
+
+        for block in normalized.components(separatedBy: "\n\n") {
+            let lines = block
+                .components(separatedBy: "\n")
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .filter { !$0.isEmpty }
+
+            guard let timeIndex = lines.firstIndex(where: { $0.contains("-->") }) else {
+                if !lines.isEmpty { report.invalidBlocks += 1 }
+                continue
+            }
+
+            let parts = lines[timeIndex].components(separatedBy: "-->")
+            guard parts.count == 2,
+                  let start = Self.parseSRTTimestamp(parts[0]),
+                  let end = Self.parseSRTTimestamp(parts[1]),
+                  end > start else {
+                report.invalidBlocks += 1
+                continue
+            }
+
+            report.blocks += 1
+            if let previousEnd, start < previousEnd + settings.minimumSubtitleGap {
+                report.overlaps += 1
+            }
+
+            let duration = end - start
+            if duration < settings.minimumSubtitleDuration {
+                report.tooShort += 1
+            }
+            if duration > settings.maximumSubtitleDuration {
+                report.tooLong += 1
+            }
+
+            let textLines = Array(lines.dropFirst(timeIndex + 1))
+            if textLines.count > settings.maxSubtitleLines {
+                report.tooManyLines += 1
+            }
+            if textLines.contains(where: { $0.count > settings.maxSubtitleLineLength }) {
+                report.longLines += 1
+            }
+
+            let characters = textLines.joined(separator: " ").count
+            let cps = Double(characters) / max(0.1, duration)
+            if cps > settings.maxCharactersPerSecond {
+                report.tooFast += 1
+            }
+
+            previousEnd = end
+        }
+
+        return report
+    }
+
+    private static func parseSRTTimestamp(_ raw: String) -> Double? {
+        let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        let pattern = #"(\d{2}):(\d{2}):(\d{2}),(\d{3})"#
+        guard let regex = try? NSRegularExpression(pattern: pattern),
+              let match = regex.firstMatch(in: value, range: NSRange(value.startIndex..., in: value)),
+              match.numberOfRanges == 5 else {
+            return nil
+        }
+
+        func int(_ index: Int) -> Int? {
+            guard let range = Range(match.range(at: index), in: value) else { return nil }
+            return Int(value[range])
+        }
+
+        guard let hours = int(1),
+              let minutes = int(2),
+              let seconds = int(3),
+              let milliseconds = int(4) else {
+            return nil
+        }
+
+        return Double(hours * 3600 + minutes * 60 + seconds) + Double(milliseconds) / 1000.0
     }
 
     private var currentShortVersion: String {

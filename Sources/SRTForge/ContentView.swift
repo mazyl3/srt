@@ -391,6 +391,10 @@ private struct MainPanel: View {
 
                     StatusPanel()
 
+                    if model.qualityReport != nil {
+                        SRTQualityPanel()
+                    }
+
                     WorkflowProgressPanel()
 
                     if model.mode == .advanced {
@@ -1057,6 +1061,136 @@ private struct ProgressRing: View {
         }
         .frame(width: 64, height: 64)
         .accessibilityLabel("Progresas \(Int(value * 100)) procentų")
+    }
+}
+
+private struct SRTQualityPanel: View {
+    @EnvironmentObject private var model: AppModel
+
+    var body: some View {
+        if let report = model.qualityReport {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(alignment: .top, spacing: 12) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill((report.issueCount == 0 ? Color.green : Color.orange).opacity(0.16))
+                        Image(systemName: report.issueCount == 0 ? "checkmark.seal.fill" : "exclamationmark.triangle.fill")
+                            .font(.system(size: 20, weight: .bold))
+                            .foregroundStyle(report.issueCount == 0 ? .green : .orange)
+                    }
+                    .frame(width: 42, height: 42)
+
+                    VStack(alignment: .leading, spacing: 5) {
+                        HStack(spacing: 7) {
+                            Text(report.statusTitle)
+                                .font(.system(size: 17, weight: .bold))
+                            HelpTip(
+                                title: "SRT kokybės patikra",
+                                message: "Patikrina sugeneruotus SRT failus pagal montavimui svarbias taisykles: laiko persidengimus, skaitymo greitį, eilučių ilgį, eilučių skaičių ir trukmes."
+                            )
+                        }
+                        Text(report.statusDetail)
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(.white.opacity(0.58))
+                    }
+
+                    Spacer()
+
+                    QualityMetric(title: "Blokai", value: "\(report.totalBlocks)", tint: .cyan)
+                    QualityMetric(title: "Signalai", value: "\(report.issueCount)", tint: report.issueCount == 0 ? .green : .orange)
+                }
+
+                ForEach(report.files) { file in
+                    SRTQualityFileRow(file: file)
+                }
+            }
+            .padding(16)
+            .background(panelBackground)
+        }
+    }
+}
+
+private struct SRTQualityFileRow: View {
+    let file: SRTQAFileReport
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            HStack(spacing: 10) {
+                Image(systemName: file.issueCount == 0 ? "checkmark.circle.fill" : "waveform.badge.exclamationmark")
+                    .foregroundStyle(file.issueCount == 0 ? .green : .orange)
+                    .frame(width: 22)
+                Text(file.fileName)
+                    .font(.system(size: 12, weight: .bold))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Spacer()
+                Text(file.issueCount == 0 ? "Editor-ready" : "\(file.issueCount) signalai")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(file.issueCount == 0 ? .green : .orange)
+            }
+
+            HStack(spacing: 7) {
+                QualityChip(title: "Blokai", value: file.blocks, tint: .cyan)
+                QualityChip(title: "Overlap", value: file.overlaps, tint: .red)
+                QualityChip(title: "CPS", value: file.tooFast, tint: .orange)
+                QualityChip(title: "Ilgos eil.", value: file.longLines, tint: .pink)
+                QualityChip(title: "Eilutės", value: file.tooManyLines, tint: .purple)
+                QualityChip(title: "Trukmės", value: file.tooShort + file.tooLong, tint: .yellow)
+            }
+        }
+        .padding(11)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color.black.opacity(0.18))
+                .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.white.opacity(0.08), lineWidth: 1))
+        )
+    }
+}
+
+private struct QualityMetric: View {
+    let title: String
+    let value: String
+    let tint: Color
+
+    var body: some View {
+        VStack(alignment: .trailing, spacing: 2) {
+            Text(value)
+                .font(.system(size: 20, weight: .bold, design: .rounded))
+                .foregroundStyle(tint)
+            Text(title)
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(.white.opacity(0.48))
+        }
+        .frame(width: 70, alignment: .trailing)
+    }
+}
+
+private struct QualityChip: View {
+    let title: String
+    let value: Int
+    let tint: Color
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Circle()
+                .fill(value == 0 ? Color.green.opacity(0.75) : tint.opacity(0.9))
+                .frame(width: 6, height: 6)
+            Text(title)
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(.white.opacity(0.50))
+                .lineLimit(1)
+            Text("\(value)")
+                .font(.system(size: 10, weight: .bold, design: .rounded))
+                .foregroundStyle(value == 0 ? .white.opacity(0.78) : tint)
+        }
+        .padding(.horizontal, 7)
+        .padding(.vertical, 5)
+        .frame(maxWidth: .infinity)
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(Color.white.opacity(0.055))
+                .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.white.opacity(0.08), lineWidth: 1))
+        )
     }
 }
 

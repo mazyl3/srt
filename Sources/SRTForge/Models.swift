@@ -236,6 +236,49 @@ struct AppUpdate: Codable, Equatable {
     let minimumSystemVersion: String?
 }
 
+struct SRTQAReport: Equatable {
+    var files: [SRTQAFileReport] = []
+
+    var totalBlocks: Int {
+        files.map(\.blocks).reduce(0, +)
+    }
+
+    var issueCount: Int {
+        files.map(\.issueCount).reduce(0, +)
+    }
+
+    var statusTitle: String {
+        issueCount == 0 ? "SRT kokybė gera" : "SRT reikia peržiūros"
+    }
+
+    var statusDetail: String {
+        if files.isEmpty {
+            return "SRT failų patikrai nėra."
+        }
+        if issueCount == 0 {
+            return "\(totalBlocks) blokai patikrinti. Kritinių kokybės problemų nerasta."
+        }
+        return "\(totalBlocks) blokai patikrinti. Rasta \(issueCount) kokybės signalų."
+    }
+}
+
+struct SRTQAFileReport: Identifiable, Equatable {
+    let id = UUID()
+    let fileName: String
+    var blocks = 0
+    var invalidBlocks = 0
+    var overlaps = 0
+    var longLines = 0
+    var tooManyLines = 0
+    var tooFast = 0
+    var tooShort = 0
+    var tooLong = 0
+
+    var issueCount: Int {
+        invalidBlocks + overlaps + longLines + tooManyLines + tooFast + tooShort + tooLong
+    }
+}
+
 enum JobState: String {
     case waiting = "Laukia"
     case running = "Vyksta"
