@@ -1137,6 +1137,17 @@ private struct SRTQualityFileRow: View {
                 QualityChip(title: "Eilutės", value: file.tooManyLines, tint: .purple)
                 QualityChip(title: "Trukmės", value: file.tooShort + file.tooLong, tint: .yellow)
             }
+
+            if !file.issues.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Top problemos")
+                        .font(.system(size: 10, weight: .black))
+                        .foregroundStyle(.white.opacity(0.48))
+                    ForEach(file.issues) { issue in
+                        SRTIssueRow(issue: issue)
+                    }
+                }
+            }
         }
         .padding(11)
         .background(
@@ -1144,6 +1155,55 @@ private struct SRTQualityFileRow: View {
                 .fill(Color.black.opacity(0.18))
                 .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.white.opacity(0.08), lineWidth: 1))
         )
+    }
+}
+
+private struct SRTIssueRow: View {
+    let issue: SRTQAIssue
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Text(issue.kind.rawValue)
+                .font(.system(size: 9, weight: .black, design: .rounded))
+                .foregroundStyle(tint)
+                .frame(width: 72, alignment: .leading)
+            Text(issue.timecode)
+                .font(.system(size: 9, weight: .bold, design: .monospaced))
+                .foregroundStyle(.white.opacity(0.50))
+                .frame(width: 82, alignment: .leading)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(issue.message)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.72))
+                    .lineLimit(1)
+                Text(issue.textPreview)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.44))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(Color.white.opacity(0.045))
+        )
+    }
+
+    private var tint: Color {
+        switch issue.kind {
+        case .overlap, .invalid:
+            return .red
+        case .tooFast:
+            return .orange
+        case .longLine:
+            return .pink
+        case .tooManyLines:
+            return .purple
+        case .duration:
+            return .yellow
+        }
     }
 }
 

@@ -29,8 +29,9 @@ The app includes a first subtitle quality pass after Whisper output:
 - splits blocks that exceed the configured line limit,
 - splits long text on sentence/phrase boundaries when possible,
 - balances two-line subtitles for better readability,
-- reports CPS / reading-speed warnings in the log.
-- shows an in-app SRT QA panel after export with block count, timing, CPS, line-length, and duration signals.
+- reports CPS / reading-speed warnings in the log,
+- shows an in-app SRT QA panel after export with block count, timing, CPS, line-length, and duration signals,
+- shows concrete SRT QA issue examples with timecodes and text previews.
 
 ## Recognition Quality
 

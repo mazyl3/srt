@@ -691,7 +691,16 @@ final class AppModel: ObservableObject {
                 .filter { !$0.isEmpty }
 
             guard let timeIndex = lines.firstIndex(where: { $0.contains("-->") }) else {
-                if !lines.isEmpty { report.invalidBlocks += 1 }
+                if !lines.isEmpty {
+                    report.invalidBlocks += 1
+                    addSRTIssue(
+                        kind: .invalid,
+                        timecode: "be laiko",
+                        message: "Blokas neturi teisingos laiko eilutės.",
+                        textLines: lines,
+                        to: &report
+                    )
+                }
                 continue
             }
 
@@ -701,40 +710,119 @@ final class AppModel: ObservableObject {
                   let end = Self.parseSRTTimestamp(parts[1]),
                   end > start else {
                 report.invalidBlocks += 1
+                addSRTIssue(
+                    kind: .invalid,
+                    timecode: "blogas laikas",
+                    message: "Laiko žyma nesuprantama arba pabaiga yra prieš pradžią.",
+                    textLines: Array(lines.dropFirst(timeIndex + 1)),
+                    to: &report
+                )
                 continue
             }
 
             report.blocks += 1
             if let previousEnd, start < previousEnd + settings.minimumSubtitleGap {
                 report.overlaps += 1
+                addSRTIssue(
+                    kind: .overlap,
+                    timecode: Self.formatSRTTimestamp(start),
+                    message: "Subtitras prasideda per arti ankstesnio bloko.",
+                    textLines: Array(lines.dropFirst(timeIndex + 1)),
+                    to: &report
+                )
             }
 
             let duration = end - start
             if duration < settings.minimumSubtitleDuration {
                 report.tooShort += 1
+                addSRTIssue(
+                    kind: .duration,
+                    timecode: Self.formatSRTTimestamp(start),
+                    message: String(format: "Per trumpa trukmė: %.1fs.", duration),
+                    textLines: Array(lines.dropFirst(timeIndex + 1)),
+                    to: &report
+                )
             }
             if duration > settings.maximumSubtitleDuration {
                 report.tooLong += 1
+                addSRTIssue(
+                    kind: .duration,
+                    timecode: Self.formatSRTTimestamp(start),
+                    message: String(format: "Per ilga trukmė: %.1fs.", duration),
+                    textLines: Array(lines.dropFirst(timeIndex + 1)),
+                    to: &report
+                )
             }
 
             let textLines = Array(lines.dropFirst(timeIndex + 1))
             if textLines.count > settings.maxSubtitleLines {
                 report.tooManyLines += 1
+                addSRTIssue(
+                    kind: .tooManyLines,
+                    timecode: Self.formatSRTTimestamp(start),
+                    message: "Bloke yra \(textLines.count) eilutės; riba yra \(settings.maxSubtitleLines).",
+                    textLines: textLines,
+                    to: &report
+                )
             }
             if textLines.contains(where: { $0.count > settings.maxSubtitleLineLength }) {
                 report.longLines += 1
+                addSRTIssue(
+                    kind: .longLine,
+                    timecode: Self.formatSRTTimestamp(start),
+                    message: "Viena eilutė viršija \(settings.maxSubtitleLineLength) simbolių ribą.",
+                    textLines: textLines,
+                    to: &report
+                )
             }
 
             let characters = textLines.joined(separator: " ").count
             let cps = Double(characters) / max(0.1, duration)
             if cps > settings.maxCharactersPerSecond {
                 report.tooFast += 1
+                addSRTIssue(
+                    kind: .tooFast,
+                    timecode: Self.formatSRTTimestamp(start),
+                    message: String(format: "Skaitymo greitis %.0f CPS; riba %.0f.", cps, settings.maxCharactersPerSecond),
+                    textLines: textLines,
+                    to: &report
+                )
             }
 
             previousEnd = end
         }
 
         return report
+    }
+
+    private func addSRTIssue(
+        kind: SRTQAIssue.Kind,
+        timecode: String,
+        message: String,
+        textLines: [String],
+        to report: inout SRTQAFileReport
+    ) {
+        guard report.issues.count < 8 else { return }
+        let preview = textLines
+            .joined(separator: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        report.issues.append(
+            SRTQAIssue(
+                kind: kind,
+                timecode: timecode,
+                message: message,
+                textPreview: preview.isEmpty ? "Teksto nėra." : preview
+            )
+        )
+    }
+
+    private static func formatSRTTimestamp(_ value: Double) -> String {
+        let totalMilliseconds = max(0, Int((value * 1000.0).rounded()))
+        let hours = totalMilliseconds / 3_600_000
+        let minutes = (totalMilliseconds % 3_600_000) / 60_000
+        let seconds = (totalMilliseconds % 60_000) / 1000
+        let milliseconds = totalMilliseconds % 1000
+        return String(format: "%02d:%02d:%02d,%03d", hours, minutes, seconds, milliseconds)
     }
 
     private func analyzeSelectedAudioIfPossible() {

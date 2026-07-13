@@ -312,9 +312,27 @@ struct SRTQAFileReport: Identifiable, Equatable {
     var tooFast = 0
     var tooShort = 0
     var tooLong = 0
+    var issues: [SRTQAIssue] = []
 
     var issueCount: Int {
         invalidBlocks + overlaps + longLines + tooManyLines + tooFast + tooShort + tooLong
+    }
+}
+
+struct SRTQAIssue: Identifiable, Equatable {
+    let id = UUID()
+    let kind: Kind
+    let timecode: String
+    let message: String
+    let textPreview: String
+
+    enum Kind: String, Equatable {
+        case overlap = "Overlap"
+        case tooFast = "CPS"
+        case longLine = "Ilga eilutė"
+        case tooManyLines = "Per daug eilučių"
+        case duration = "Trukmė"
+        case invalid = "Blogas blokas"
     }
 }
 
