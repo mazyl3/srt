@@ -1,7 +1,7 @@
 {
   "version": "1.0.0",
-  "build": "113",
-  "downloadURL": "https://github.com/mazyl3/srt/releases/download/v1.0.0-build113/SRT-Forge-Setup.dmg",
-  "releaseNotes": "Version 1.0.0 build 113: improves PolyWAV production WAV transcription by preferring dedicated BOOM/LAV channels over MixL/MixR channels, disabling prompt injection for multi-channel WAV sources, and using a stricter no-speech threshold to reduce hallucinations, while keeping Burned MP4 export, SRT QA issue examples, Lithuanian/English output, offline setup, and update checking.",
+  "build": "114",
+  "downloadURL": "https://github.com/mazyl3/srt/releases/download/v1.0.0-build114/SRT-Forge-Setup.dmg",
+  "releaseNotes": "Version 1.0.0 build 114: improves update checking diagnostics and disables the download button unless a newer update is actually available, while keeping PolyWAV BOOM/LAV channel selection, no-prompt PolyWAV transcription, Burned MP4 export, SRT QA issue examples, Lithuanian/English output, offline setup, and update checking.",
   "minimumSystemVersion": "13.0"
 }

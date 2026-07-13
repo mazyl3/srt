@@ -600,6 +600,7 @@ final class AppModel: ObservableObject {
         }
 
         isCheckingForUpdates = true
+        availableUpdate = nil
         updateStatusMessage = "Tikrinami atnaujinimai..."
         append(.info, "Tikrinamas atnaujinimų manifestas: \(manifestURL.absoluteString)")
 
@@ -607,21 +608,26 @@ final class AppModel: ObservableObject {
             do {
                 let (data, response) = try await URLSession.shared.data(from: manifestURL)
                 if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+                    if http.statusCode == 404 {
+                        throw PipelineError.commandFailed("Atnaujinimų manifestas nerastas GitHub'e (HTTP 404). Patikrink, ar version.json yra nupushintas į main šaką ir ar URL teisingas.")
+                    }
                     throw PipelineError.commandFailed("Atnaujinimų serveris grąžino HTTP \(http.statusCode).")
                 }
 
                 let update = try JSONDecoder().decode(AppUpdate.self, from: data)
-                availableUpdate = update
 
                 if Self.isUpdate(update, newerThanVersion: currentShortVersion, currentBuild: currentBuildNumber) {
+                    availableUpdate = update
                     let buildLabel = update.build.map { " (\($0))" } ?? ""
                     updateStatusMessage = "Yra nauja versija \(update.version)\(buildLabel)."
                     append(.success, "Rastas atnaujinimas: \(update.version)\(buildLabel)")
                 } else {
+                    availableUpdate = nil
                     updateStatusMessage = "Naudoji naujausią versiją \(currentShortVersion) (\(currentBuildNumber))."
                     append(.success, "Atnaujinimų nėra.")
                 }
             } catch {
+                availableUpdate = nil
                 updateStatusMessage = "Atnaujinimų patikra nepavyko: \(error.localizedDescription)"
                 append(.error, updateStatusMessage)
             }
