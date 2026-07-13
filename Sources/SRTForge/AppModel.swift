@@ -444,9 +444,7 @@ final class AppModel: ObservableObject {
             let failed = jobs.filter { $0.state == .failed }.count
             let cancelled = jobs.filter { $0.state == .cancelled }.count
             let completedSRTs = jobs.flatMap(\.srtFiles)
-            resultFiles = jobs.flatMap { job in
-                [job.resultFile].compactMap { $0 } + job.srtFiles + job.transcriptFiles + job.vttFiles + job.assFiles
-            }
+            resultFiles = collectResultFiles(from: jobs)
             qualityReport = analyzeSRTFiles(completedSRTs, settings: localSettings)
             asrQualityReport = analyzeASRFiles(completedSRTs)
             logASRQualityReport(asrQualityReport)
@@ -511,6 +509,7 @@ final class AppModel: ObservableObject {
                 $0.transcriptFiles = result.transcriptFiles
                 $0.vttFiles = result.vttFiles
                 $0.assFiles = result.assFiles
+                $0.manifestFiles = result.manifestFiles
                 $0.phase = .complete
                 $0.state = .complete
                 $0.progress = 1
@@ -538,6 +537,21 @@ final class AppModel: ObservableObject {
     private func updateJob(_ id: UUID, mutate: (inout TranscriptionJob) -> Void) {
         guard let index = jobs.firstIndex(where: { $0.id == id }) else { return }
         mutate(&jobs[index])
+    }
+
+    private func collectResultFiles(from jobs: [TranscriptionJob]) -> [URL] {
+        jobs.flatMap { job -> [URL] in
+            var files = [URL]()
+            if let resultFile = job.resultFile {
+                files.append(resultFile)
+            }
+            files.append(contentsOf: job.srtFiles)
+            files.append(contentsOf: job.transcriptFiles)
+            files.append(contentsOf: job.vttFiles)
+            files.append(contentsOf: job.assFiles)
+            files.append(contentsOf: job.manifestFiles)
+            return files
+        }
     }
 
     private func appendJobLog(_ id: UUID, _ level: LogEntry.LogLevel, _ message: String) {

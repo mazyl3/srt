@@ -61,8 +61,9 @@ struct SubtitlePipeline {
         let englishASS = englishOutputBase.appendingPathExtension("ass")
         let subtitleTrackVideo = outputBase.appendingPathExtension("subtitled").appendingPathExtension("mp4")
         let burnedInVideo = outputBase.appendingPathExtension("burned").appendingPathExtension("mp4")
+        let outputManifest = outputBase.appendingPathExtension("srtforge").appendingPathExtension("json")
 
-        for url in [lithuanianSRT, lithuanianTXT, lithuanianVTT, lithuanianASS, englishSRT, englishTXT, englishVTT, englishASS, subtitleTrackVideo, burnedInVideo] where FileManager.default.fileExists(atPath: url.path) {
+        for url in [lithuanianSRT, lithuanianTXT, lithuanianVTT, lithuanianASS, englishSRT, englishTXT, englishVTT, englishASS, subtitleTrackVideo, burnedInVideo, outputManifest] where FileManager.default.fileExists(atPath: url.path) {
             try FileManager.default.removeItem(at: url)
         }
 
@@ -284,6 +285,27 @@ struct SubtitlePipeline {
             }
         }
 
+        let visibleSRTs = createdSRTs
+        let primary = createdVideo ?? (wantsLithuanian ? lithuanianSRT : englishSRT)
+        let outputFiles = visibleSRTs
+            + createdTranscripts
+            + createdVTTs
+            + createdASSs
+            + [createdVideo].compactMap { $0 }
+        if !outputFiles.isEmpty {
+            try Self.writeOutputManifest(
+                to: outputManifest,
+                sourceFile: inputFile,
+                primaryFile: primary,
+                outputFiles: outputFiles,
+                settings: settings,
+                audioStreamCount: audioStreamCount,
+                sourceLabel: sourceLabel,
+                usesPolyWAVProfile: usesPolyWAVProfile
+            )
+            await log(.success, "Output manifest sukurtas: \(outputManifest.path)")
+        }
+
         if !settings.keepWorkingFiles {
             try? FileManager.default.removeItem(at: jobDirectory)
         } else {
@@ -305,9 +327,8 @@ struct SubtitlePipeline {
             await log(.success, "SRT failas sukurtas: \(lithuanianSRT.path)")
         }
 
-        let visibleSRTs = createdSRTs
-        let primary = createdVideo ?? (wantsLithuanian ? lithuanianSRT : englishSRT)
-        return PipelineResult(primaryFile: primary, srtFiles: visibleSRTs, transcriptFiles: createdTranscripts, vttFiles: createdVTTs, assFiles: createdASSs, videoFile: createdVideo)
+        let createdManifests = FileManager.default.fileExists(atPath: outputManifest.path) ? [outputManifest] : []
+        return PipelineResult(primaryFile: primary, srtFiles: visibleSRTs, transcriptFiles: createdTranscripts, vttFiles: createdVTTs, assFiles: createdASSs, manifestFiles: createdManifests, videoFile: createdVideo)
     }
 
     private static func audioPreparationArguments(
@@ -1593,6 +1614,54 @@ struct SubtitlePipeline {
             .replacingOccurrences(of: "\n", with: "\\N")
     }
 
+    private static func writeOutputManifest(
+        to url: URL,
+        sourceFile: URL,
+        primaryFile: URL,
+        outputFiles: [URL],
+        settings: AppSettings,
+        audioStreamCount: Int,
+        sourceLabel: String,
+        usesPolyWAVProfile: Bool
+    ) throws {
+        let manifest = OutputManifest(
+            app: OutputManifest.AppInfo(
+                name: "SRT Forge",
+                version: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev",
+                build: Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "dev"
+            ),
+            createdAt: ISO8601DateFormatter().string(from: Date()),
+            source: OutputManifest.SourceInfo(
+                path: sourceFile.path,
+                fileName: sourceFile.lastPathComponent
+            ),
+            audio: OutputManifest.AudioInfo(
+                inputMode: settings.audioInputMode.rawValue,
+                audioStreamCount: audioStreamCount,
+                selectedSource: sourceLabel,
+                polyWAVProfile: usesPolyWAVProfile
+            ),
+            settings: OutputManifest.SettingsInfo(
+                languageCode: settings.languageCode,
+                autoDetectLanguage: settings.autoDetectLanguage,
+                subtitleOutputMode: settings.subtitleOutputMode.rawValue,
+                videoExportMode: settings.videoExportMode.rawValue,
+                maxSegmentLength: settings.maxSegmentLength,
+                maxSubtitleLineLength: settings.maxSubtitleLineLength,
+                maxSubtitleLines: settings.maxSubtitleLines,
+                maxCharactersPerSecond: settings.maxCharactersPerSecond,
+                removeASRArtifacts: settings.removeASRArtifacts
+            ),
+            primaryOutput: OutputManifest.OutputFile(url: primaryFile),
+            outputs: outputFiles.map(OutputManifest.OutputFile.init(url:))
+        )
+
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        let data = try encoder.encode(manifest)
+        try data.write(to: url, options: .atomic)
+    }
+
     private static func parseSRTTimestamp(_ raw: String) -> Double? {
         let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         let pattern = #"(\d{2}):(\d{2}):(\d{2}),(\d{3})"#
@@ -1682,6 +1751,60 @@ private struct SubtitleQualityReport {
             || longLineWarnings > 0
             || cpsWarnings > 0
             || remainingCPSWarnings > 0
+    }
+}
+
+private struct OutputManifest: Codable {
+    let app: AppInfo
+    let createdAt: String
+    let source: SourceInfo
+    let audio: AudioInfo
+    let settings: SettingsInfo
+    let primaryOutput: OutputFile
+    let outputs: [OutputFile]
+
+    struct AppInfo: Codable {
+        let name: String
+        let version: String
+        let build: String
+    }
+
+    struct SourceInfo: Codable {
+        let path: String
+        let fileName: String
+    }
+
+    struct AudioInfo: Codable {
+        let inputMode: String
+        let audioStreamCount: Int
+        let selectedSource: String
+        let polyWAVProfile: Bool
+    }
+
+    struct SettingsInfo: Codable {
+        let languageCode: String
+        let autoDetectLanguage: Bool
+        let subtitleOutputMode: String
+        let videoExportMode: String
+        let maxSegmentLength: Int
+        let maxSubtitleLineLength: Int
+        let maxSubtitleLines: Int
+        let maxCharactersPerSecond: Double
+        let removeASRArtifacts: Bool
+    }
+
+    struct OutputFile: Codable {
+        let type: String
+        let path: String
+        let fileName: String
+        let bytes: Int
+
+        init(url: URL) {
+            type = url.pathExtension.lowercased()
+            path = url.path
+            fileName = url.lastPathComponent
+            bytes = ((try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize) ?? 0
+        }
     }
 }
 

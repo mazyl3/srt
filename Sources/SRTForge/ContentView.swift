@@ -1138,7 +1138,8 @@ private struct ResultOutputsPanel: View {
         case "txt": return 1
         case "vtt": return 2
         case "ass": return 3
-        case "mp4", "mov", "m4v": return 4
+        case "json": return 4
+        case "mp4", "mov", "m4v": return 5
         default: return 9
         }
     }
@@ -1214,6 +1215,7 @@ private struct ResultOutputCard: View {
         case "txt": return "TXT"
         case "vtt": return "VTT"
         case "ass": return "ASS"
+        case "json": return "MANIFEST"
         case "mp4", "mov", "m4v": return "VIDEO"
         default: return ext.uppercased()
         }
@@ -1225,6 +1227,7 @@ private struct ResultOutputCard: View {
         case "txt": return "doc.text.fill"
         case "vtt": return "globe"
         case "ass": return "textformat.size"
+        case "json": return "curlybraces"
         case "mp4", "mov", "m4v": return "film.fill"
         default: return "doc.fill"
         }
@@ -1236,6 +1239,7 @@ private struct ResultOutputCard: View {
         case "txt": return .green
         case "vtt": return .blue
         case "ass": return .purple
+        case "json": return .gray
         case "mp4", "mov", "m4v": return .orange
         default: return .white.opacity(0.72)
         }

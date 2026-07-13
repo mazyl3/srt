@@ -297,10 +297,11 @@ struct PipelineResult: Equatable {
     let transcriptFiles: [URL]
     let vttFiles: [URL]
     let assFiles: [URL]
+    let manifestFiles: [URL]
     let videoFile: URL?
 
     var allFiles: [URL] {
-        srtFiles + transcriptFiles + vttFiles + assFiles + [videoFile].compactMap { $0 }
+        srtFiles + transcriptFiles + vttFiles + assFiles + manifestFiles + [videoFile].compactMap { $0 }
     }
 }
 
@@ -522,6 +523,7 @@ struct TranscriptionJob: Identifiable, Equatable {
     var transcriptFiles: [URL] = []
     var vttFiles: [URL] = []
     var assFiles: [URL] = []
+    var manifestFiles: [URL] = []
     var phase: JobPhase = .idle
     var state: JobState = .waiting
     var progress: Double = 0

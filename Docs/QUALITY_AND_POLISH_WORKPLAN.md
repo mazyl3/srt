@@ -51,6 +51,7 @@ Already implemented:
 - TXT transcript export generated from the cleaned SRT output.
 - VTT subtitle export generated from the cleaned SRT output.
 - ASS styled subtitle export generated from the cleaned SRT output.
+- Output manifest JSON generated for auditability and benchmark tracking.
 
 ## Workstream 1: ASR Quality Report
 
