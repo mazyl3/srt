@@ -1760,7 +1760,7 @@ private struct AudioDiagnosticsBlock: View {
                             .lineLimit(1)
                     }
 
-                    Text("Paspausk track eilutę, jei nori priverstinai naudoti konkretų mikrofoną.")
+                    Text(report.channels.isEmpty ? "Paspausk track eilutę, jei nori priverstinai naudoti konkretų mikrofoną." : "PolyWAV faile gali spausti konkretų kanalą, pvz. BOOM arba LAV.")
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(.white.opacity(0.50))
 
@@ -1769,9 +1769,28 @@ private struct AudioDiagnosticsBlock: View {
                             AudioTrackRow(
                                 track: track,
                                 recommended: report.recommendedTrack == track.audioPosition,
-                                selected: model.settings.audioInputMode == .manualTrack && model.settings.manualAudioTrackPosition == track.audioPosition
+                                selected: model.settings.audioInputMode == .manualTrack
+                                    && model.settings.manualAudioTrackPosition == track.audioPosition
+                                    && model.settings.manualAudioChannelIndex == nil
                             ) {
                                 model.selectManualAudioTrack(track)
+                            }
+                        }
+                    }
+
+                    if !report.channels.isEmpty {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("WAV kanalai")
+                                .font(.system(size: 10, weight: .black))
+                                .foregroundStyle(.white.opacity(0.48))
+                            ForEach(report.channels) { channel in
+                                AudioChannelRow(
+                                    channel: channel,
+                                    recommended: report.recommendedChannel == channel.channelIndex,
+                                    selected: model.settings.audioInputMode == .manualTrack && model.settings.manualAudioChannelIndex == channel.channelIndex
+                                ) {
+                                    model.selectManualAudioChannel(channel)
+                                }
                             }
                         }
                     }
@@ -1822,6 +1841,49 @@ private struct AudioTrackRow: View {
                     .font(.system(size: 10, weight: .bold, design: .monospaced))
                     .foregroundStyle(.white.opacity(0.52))
                 Text(track.meanVolumeLabel)
+                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                    .foregroundStyle(selected ? .pink : recommended ? .green : .orange.opacity(0.9))
+                    .frame(width: 70, alignment: .trailing)
+            }
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill((selected ? Color.pink : recommended ? Color.green : Color.white).opacity(selected ? 0.14 : recommended ? 0.10 : 0.055))
+                .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder((selected ? Color.pink : recommended ? Color.green : Color.white).opacity(selected ? 0.36 : 0.12), lineWidth: 1))
+        )
+    }
+}
+
+private struct AudioChannelRow: View {
+    let channel: AudioChannelDiagnostic
+    let recommended: Bool
+    let selected: Bool
+    let select: () -> Void
+
+    var body: some View {
+        Button(action: select) {
+            HStack(spacing: 8) {
+                Image(systemName: selected ? "dot.radiowaves.left.and.right" : recommended ? "checkmark.seal.fill" : "waveform.path")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(selected ? .pink : recommended ? .green : .white.opacity(0.48))
+                    .frame(width: 18)
+                Text("Ch \(channel.channelIndex + 1)")
+                    .font(.system(size: 11, weight: .bold, design: .monospaced))
+                    .frame(width: 42, alignment: .leading)
+                Text(channel.label.isEmpty ? "kanalas" : channel.label)
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .foregroundStyle(.white.opacity(0.56))
+                    .lineLimit(1)
+                Spacer()
+                if selected {
+                    Text("USE")
+                        .font(.system(size: 9, weight: .black, design: .monospaced))
+                        .foregroundStyle(.pink)
+                }
+                Text(channel.meanVolumeLabel)
                     .font(.system(size: 10, weight: .bold, design: .monospaced))
                     .foregroundStyle(selected ? .pink : recommended ? .green : .orange.opacity(0.9))
                     .frame(width: 70, alignment: .trailing)

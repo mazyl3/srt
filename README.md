@@ -42,6 +42,7 @@ For camera files with multiple audio tracks, the app can now prepare better Whis
 - automatically choose the strongest audio track for multi-track camera files,
 - show an audio diagnostics panel with track count, codec, channels, sample rate, volume level, and Auto best recommendation,
 - manually force a specific audio track from the diagnostics panel,
+- detect PolyWAV / multi-channel WAV files and choose or force individual channels such as BOOM or LAV,
 - apply speech-focused filters before Whisper,
 - normalize loudness for speech,
 - reduce steady noise,

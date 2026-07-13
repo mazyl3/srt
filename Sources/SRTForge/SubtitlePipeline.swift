@@ -80,7 +80,17 @@ struct SubtitlePipeline {
             settings: settings,
             audioStreamCount: audioStreamCount
         )
-        await log(.info, "Rasta audio trackų: \(audioStreamCount). Režimas: \(settings.audioInputMode.rawValue). Naudojamas trackas: \(selectedAudioTrack.map { String($0 + 1) } ?? "mix").")
+        let selectedAudioChannel = Self.selectedAudioChannel(
+            inputFile: safeInput,
+            ffmpegPath: ffmpegPath,
+            settings: settings,
+            audioStreamCount: audioStreamCount,
+            selectedAudioTrack: selectedAudioTrack
+        )
+        let sourceLabel = selectedAudioChannel.map { "Track \((selectedAudioTrack ?? 0) + 1), Ch \($0 + 1)" }
+            ?? selectedAudioTrack.map { "Track \($0 + 1)" }
+            ?? "mix"
+        await log(.info, "Rasta audio trackų: \(audioStreamCount). Režimas: \(settings.audioInputMode.rawValue). Naudojamas šaltinis: \(sourceLabel).")
         try await runner.run(
             executable: ffmpegPath,
             arguments: Self.audioPreparationArguments(
@@ -88,7 +98,8 @@ struct SubtitlePipeline {
                 outputFile: preparedAudio,
                 settings: settings,
                 audioStreamCount: audioStreamCount,
-                selectedAudioTrack: selectedAudioTrack
+                selectedAudioTrack: selectedAudioTrack,
+                selectedAudioChannel: selectedAudioChannel
             ),
             log: log,
             cancellation: cancellation
@@ -252,7 +263,8 @@ struct SubtitlePipeline {
         outputFile: URL,
         settings: AppSettings,
         audioStreamCount: Int,
-        selectedAudioTrack: Int?
+        selectedAudioTrack: Int?,
+        selectedAudioChannel: Int?
     ) -> [String] {
         let filter = speechAudioFilter(settings: settings)
         let shouldMix = settings.audioInputMode == .mixAllTracks && audioStreamCount > 1
@@ -266,6 +278,21 @@ struct SubtitlePipeline {
                 "-filter_complex", filterComplex,
                 "-map", "[outa]",
                 "-vn",
+                "-ar", "16000",
+                "-ac", "1",
+                "-c:a", "pcm_s16le",
+                "-f", "wav",
+                outputFile.path
+            ]
+        }
+
+        if let selectedAudioChannel {
+            return [
+                "-y",
+                "-i", inputFile.path,
+                "-map", "0:a:\(selectedAudioTrack ?? 0)",
+                "-vn",
+                "-af", "pan=mono|c0=c\(selectedAudioChannel),\(filter)",
                 "-ar", "16000",
                 "-ac", "1",
                 "-c:a", "pcm_s16le",
@@ -308,6 +335,29 @@ struct SubtitlePipeline {
         }
     }
 
+    private static func selectedAudioChannel(
+        inputFile: URL,
+        ffmpegPath: String,
+        settings: AppSettings,
+        audioStreamCount: Int,
+        selectedAudioTrack: Int?
+    ) -> Int? {
+        guard settings.audioInputMode != .mixAllTracks else { return nil }
+        let track = selectedAudioTrack ?? 0
+        let channelCount = audioChannelCount(inputFile: inputFile, ffmpegPath: ffmpegPath, audioTrackIndex: track)
+        guard channelCount > 1 else { return nil }
+
+        if settings.audioInputMode == .manualTrack, let manualChannel = settings.manualAudioChannelIndex {
+            return min(max(0, manualChannel), channelCount - 1)
+        }
+
+        if settings.audioInputMode == .autoBestTrack, audioStreamCount == 1 {
+            return bestAudioChannel(inputFile: inputFile, ffmpegPath: ffmpegPath, channelCount: channelCount)
+        }
+
+        return nil
+    }
+
     private static func bestAudioTrack(inputFile: URL, ffmpegPath: String, audioStreamCount: Int) -> Int? {
         let candidates = (0..<audioStreamCount).compactMap { index -> AudioTrackScore? in
             guard let meanVolume = meanVolumeDB(inputFile: inputFile, ffmpegPath: ffmpegPath, audioTrackIndex: index) else {
@@ -331,6 +381,55 @@ struct SubtitlePipeline {
             "-i", inputFile.path,
             "-map", "0:a:\(audioTrackIndex)",
             "-af", "volumedetect",
+            "-f", "null",
+            "-"
+        ]
+
+        let outputPipe = Pipe()
+        process.standardOutput = outputPipe
+        process.standardError = outputPipe
+
+        do {
+            try process.run()
+            process.waitUntilExit()
+        } catch {
+            return nil
+        }
+
+        let data = outputPipe.fileHandleForReading.readDataToEndOfFile()
+        let output = String(data: data, encoding: .utf8) ?? ""
+        let pattern = #"mean_volume:\s*(-?\d+(?:\.\d+)?)\s*dB"#
+        guard let regex = try? NSRegularExpression(pattern: pattern),
+              let match = regex.firstMatch(in: output, range: NSRange(output.startIndex..., in: output)),
+              let range = Range(match.range(at: 1), in: output) else {
+            return nil
+        }
+
+        return Double(output[range])
+    }
+
+    private static func bestAudioChannel(inputFile: URL, ffmpegPath: String, channelCount: Int) -> Int? {
+        let candidates = (0..<channelCount).compactMap { index -> AudioTrackScore? in
+            guard let meanVolume = channelMeanVolumeDB(inputFile: inputFile, ffmpegPath: ffmpegPath, channelIndex: index) else {
+                return nil
+            }
+            return AudioTrackScore(index: index, meanVolumeDB: meanVolume)
+        }
+
+        return candidates
+            .sorted { $0.meanVolumeDB > $1.meanVolumeDB }
+            .first?
+            .index
+    }
+
+    private static func channelMeanVolumeDB(inputFile: URL, ffmpegPath: String, channelIndex: Int) -> Double? {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: ffmpegPath)
+        process.arguments = [
+            "-hide_banner",
+            "-t", "30",
+            "-i", inputFile.path,
+            "-af", "pan=mono|c0=c\(channelIndex),volumedetect",
             "-f", "null",
             "-"
         ]
@@ -410,6 +509,39 @@ struct SubtitlePipeline {
             .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
             .count
         return max(1, count)
+    }
+
+    private static func audioChannelCount(inputFile: URL, ffmpegPath: String, audioTrackIndex: Int) -> Int {
+        let ffprobePath = ffprobePath(for: ffmpegPath)
+        guard FileManager.default.isExecutableFile(atPath: ffprobePath) else {
+            return 1
+        }
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: ffprobePath)
+        process.arguments = [
+            "-v", "error",
+            "-select_streams", "a:\(audioTrackIndex)",
+            "-show_entries", "stream=channels",
+            "-of", "csv=p=0",
+            inputFile.path
+        ]
+
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = Pipe()
+
+        do {
+            try process.run()
+            process.waitUntilExit()
+        } catch {
+            return 1
+        }
+
+        guard process.terminationStatus == 0 else { return 1 }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        let output = String(data: data, encoding: .utf8) ?? ""
+        return max(1, Int(output.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 1)
     }
 
     private static func ffprobePath(for ffmpegPath: String) -> String {

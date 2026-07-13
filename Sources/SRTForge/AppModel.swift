@@ -173,7 +173,15 @@ final class AppModel: ObservableObject {
     func selectManualAudioTrack(_ track: AudioTrackDiagnostic) {
         settings.audioInputMode = .manualTrack
         settings.manualAudioTrackPosition = track.audioPosition
+        settings.manualAudioChannelIndex = nil
         append(.info, "Rankiniu būdu pasirinktas audio Track \(track.audioPosition + 1) Whisper atpažinimui.")
+    }
+
+    func selectManualAudioChannel(_ channel: AudioChannelDiagnostic) {
+        settings.audioInputMode = .manualTrack
+        settings.manualAudioTrackPosition = 0
+        settings.manualAudioChannelIndex = channel.channelIndex
+        append(.info, "Rankiniu būdu pasirinktas WAV Ch \(channel.channelIndex + 1) Whisper atpažinimui.")
     }
 
     var maxHardwareParallelJobs: Int {
@@ -1153,6 +1161,30 @@ private enum AudioDiagnosticAnalyzer {
                 audioTrackIndex: report.tracks[index].audioPosition
             )
         }
+
+        if report.tracks.count == 1, let track = report.tracks.first, track.channels > 1 {
+            report.channels = (0..<track.channels).map { channelIndex in
+                AudioChannelDiagnostic(
+                    streamIndex: track.streamIndex,
+                    channelIndex: channelIndex,
+                    label: channelLabel(file: file, channelIndex: channelIndex),
+                    meanVolumeDB: channelMeanVolumeDB(
+                        file: file,
+                        ffmpegPath: ffmpegPath,
+                        channelIndex: channelIndex
+                    )
+                )
+            }
+            report.recommendedChannel = report.channels
+                .compactMap { channel -> (Int, Double)? in
+                    guard let mean = channel.meanVolumeDB else { return nil }
+                    return (channel.channelIndex, mean)
+                }
+                .sorted { $0.1 > $1.1 }
+                .first?
+                .0
+        }
+
         report.recommendedTrack = report.tracks
             .compactMap { track -> (Int, Double)? in
                 guard let mean = track.meanVolumeDB else { return nil }
@@ -1162,6 +1194,56 @@ private enum AudioDiagnosticAnalyzer {
             .first?
             .0
         return report
+    }
+
+    private static func channelLabel(file: URL, channelIndex: Int) -> String {
+        guard
+            let handle = try? FileHandle(forReadingFrom: file)
+        else {
+            return ""
+        }
+        defer { try? handle.close() }
+        let data = handle.readData(ofLength: 262_144)
+        let content = String(data: data, encoding: .isoLatin1) ?? ""
+        let exactCandidates = [
+            "sTRK\(channelIndex + 1)=",
+            "TRK\(channelIndex + 1)="
+        ]
+        for marker in exactCandidates {
+            guard let range = content.range(of: marker) else { continue }
+            return metadataValue(after: range, in: content)
+        }
+
+        let pattern = #"s?TRK(\d+)="#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return "" }
+        let matches = regex.matches(in: content, range: NSRange(content.startIndex..., in: content))
+        let labels = matches
+            .compactMap { match -> (Int, String)? in
+                guard
+                    let numberRange = Range(match.range(at: 1), in: content),
+                    let fullRange = Range(match.range(at: 0), in: content),
+                    let number = Int(content[numberRange])
+                else {
+                    return nil
+                }
+                let value = metadataValue(after: fullRange, in: content)
+                return value.isEmpty ? nil : (number, value)
+            }
+            .sorted { $0.0 < $1.0 }
+            .map(\.1)
+
+        if channelIndex < labels.count {
+            return labels[channelIndex]
+        }
+        return ""
+    }
+
+    private static func metadataValue(after range: Range<String.Index>, in content: String) -> String {
+        let suffix = content[range.upperBound...]
+        let raw = suffix.prefix { char in
+            char != "\n" && char != "\r" && char != "\0"
+        }
+        return raw.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private static func readAudioDiagnostics(file: URL, ffprobePath: String) -> AudioDiagnosticReport {
@@ -1218,6 +1300,40 @@ private enum AudioDiagnosticAnalyzer {
             "-i", file.path,
             "-map", "0:a:\(audioTrackIndex)",
             "-af", "volumedetect",
+            "-f", "null",
+            "-"
+        ]
+
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = pipe
+
+        do {
+            try process.run()
+            process.waitUntilExit()
+        } catch {
+            return nil
+        }
+
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        let output = String(data: data, encoding: .utf8) ?? ""
+        let pattern = #"mean_volume:\s*(-?\d+(?:\.\d+)?)\s*dB"#
+        guard let regex = try? NSRegularExpression(pattern: pattern),
+              let match = regex.firstMatch(in: output, range: NSRange(output.startIndex..., in: output)),
+              let range = Range(match.range(at: 1), in: output) else {
+            return nil
+        }
+        return Double(output[range])
+    }
+
+    private static func channelMeanVolumeDB(file: URL, ffmpegPath: String, channelIndex: Int) -> Double? {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: ffmpegPath)
+        process.arguments = [
+            "-hide_banner",
+            "-t", "10",
+            "-i", file.path,
+            "-af", "pan=mono|c0=c\(channelIndex),volumedetect",
             "-f", "null",
             "-"
         ]

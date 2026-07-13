@@ -264,6 +264,7 @@ struct AppSettings {
     var keepWorkingFiles = false
     var audioInputMode: AudioInputMode = .autoBestTrack
     var manualAudioTrackPosition: Int?
+    var manualAudioChannelIndex: Int?
     var enhanceSpeechAudio = true
     var useWhisperLanguagePrompt = true
     var splitOnWord = true
@@ -372,8 +373,13 @@ struct AudioDiagnosticReport: Equatable {
     let fileName: String
     var tracks: [AudioTrackDiagnostic] = []
     var recommendedTrack: Int?
+    var channels: [AudioChannelDiagnostic] = []
+    var recommendedChannel: Int?
 
     var title: String {
+        if tracks.count == 1, channels.count > 1 {
+            return "\(channels.count) WAV kanalai"
+        }
         if tracks.isEmpty {
             return "Audio trackų nerasta"
         }
@@ -384,10 +390,30 @@ struct AudioDiagnosticReport: Equatable {
     }
 
     var detail: String {
+        if let recommendedChannel {
+            return "Auto best rekomenduoja Ch \(recommendedChannel + 1)."
+        }
         if let recommendedTrack {
             return "Auto best rekomenduoja Track \(recommendedTrack + 1)."
         }
         return "Naudok Mix all arba pasirink pirmą tracką."
+    }
+}
+
+struct AudioChannelDiagnostic: Identifiable, Equatable {
+    let id = UUID()
+    let streamIndex: Int
+    let channelIndex: Int
+    var label: String = ""
+    var meanVolumeDB: Double?
+
+    var displayName: String {
+        label.isEmpty ? "Ch \(channelIndex + 1)" : "Ch \(channelIndex + 1) \(label)"
+    }
+
+    var meanVolumeLabel: String {
+        guard let meanVolumeDB else { return "n/a" }
+        return String(format: "%.1f dB", meanVolumeDB)
     }
 }
 
