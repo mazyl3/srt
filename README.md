@@ -63,6 +63,7 @@ The app now separates raw transcription quality from SRT formatting quality:
 - Clean TXT transcripts are exported from the cleaned SRT text for review, editing, and benchmark references.
 - VTT subtitles are exported from the cleaned SRT timing for web players and creator platforms.
 - ASS subtitles are exported with a clean default style for styled subtitle workflows.
+- The result panel groups generated files by format so users can open SRT, TXT, VTT, ASS, or video outputs directly.
 
 ## Modes
 

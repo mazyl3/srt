@@ -584,6 +584,14 @@ final class AppModel: ObservableObject {
         NSWorkspace.shared.activateFileViewerSelecting(files)
     }
 
+    func openFile(_ url: URL) {
+        NSWorkspace.shared.open(url)
+    }
+
+    func revealFile(_ url: URL) {
+        NSWorkspace.shared.activateFileViewerSelecting([url])
+    }
+
     func openJobResult(_ job: TranscriptionJob) {
         guard let resultFile = job.resultFile else { return }
         NSWorkspace.shared.open(resultFile)

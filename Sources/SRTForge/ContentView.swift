@@ -391,6 +391,10 @@ private struct MainPanel: View {
 
                     StatusPanel()
 
+                    if !model.resultFiles.isEmpty {
+                        ResultOutputsPanel()
+                    }
+
                     if model.asrQualityReport != nil {
                         ASRQualityPanel()
                     }
@@ -1065,6 +1069,176 @@ private struct ProgressRing: View {
         }
         .frame(width: 64, height: 64)
         .accessibilityLabel("Progresas \(Int(value * 100)) procentų")
+    }
+}
+
+private struct ResultOutputsPanel: View {
+    @EnvironmentObject private var model: AppModel
+
+    private var files: [URL] {
+        model.resultFiles.sorted { lhs, rhs in
+            let leftRank = outputRank(lhs)
+            let rightRank = outputRank(rhs)
+            if leftRank == rightRank {
+                return lhs.lastPathComponent < rhs.lastPathComponent
+            }
+            return leftRank < rightRank
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .top, spacing: 12) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(Color.cyan.opacity(0.16))
+                    Image(systemName: "tray.full.fill")
+                        .font(.system(size: 20, weight: .bold))
+                        .foregroundStyle(.cyan)
+                }
+                .frame(width: 42, height: 42)
+
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack(spacing: 7) {
+                        Text("Sukurti failai")
+                            .font(.system(size: 17, weight: .bold))
+                        HelpTip(
+                            title: "Rezultatų rinkinys",
+                            message: "SRT skirtas montavimui, TXT tekstui ir reference darbui, VTT web grotuvams, ASS styled subtitrams, MP4 video eksportui."
+                        )
+                    }
+                    Text("\(files.count) failai paruošti. Gali atidaryti konkretų formatą arba parodyti visus Finder lange.")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.58))
+                }
+
+                Spacer()
+
+                Button {
+                    model.revealAllResults()
+                } label: {
+                    Label("Finder", systemImage: "folder")
+                }
+                .buttonStyle(SecondaryButtonStyle())
+            }
+
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 230), spacing: 10)], spacing: 10) {
+                ForEach(files, id: \.path) { file in
+                    ResultOutputCard(file: file)
+                }
+            }
+        }
+        .padding(16)
+        .background(panelBackground)
+    }
+
+    private func outputRank(_ url: URL) -> Int {
+        switch url.pathExtension.lowercased() {
+        case "srt": return 0
+        case "txt": return 1
+        case "vtt": return 2
+        case "ass": return 3
+        case "mp4", "mov", "m4v": return 4
+        default: return 9
+        }
+    }
+}
+
+private struct ResultOutputCard: View {
+    @EnvironmentObject private var model: AppModel
+    let file: URL
+
+    var body: some View {
+        HStack(spacing: 10) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 7)
+                    .fill(tint.opacity(0.16))
+                Image(systemName: icon)
+                    .font(.system(size: 17, weight: .bold))
+                    .foregroundStyle(tint)
+            }
+            .frame(width: 38, height: 38)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(kind)
+                    .font(.system(size: 10, weight: .black))
+                    .foregroundStyle(tint)
+                Text(file.lastPathComponent)
+                    .font(.system(size: 11, weight: .bold))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Text(file.deletingLastPathComponent().path)
+                    .font(.system(size: 9, weight: .medium, design: .monospaced))
+                    .foregroundStyle(.white.opacity(0.38))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+
+            Spacer(minLength: 4)
+
+            VStack(spacing: 6) {
+                Button {
+                    model.openFile(file)
+                } label: {
+                    Image(systemName: "arrow.up.forward.app")
+                        .frame(width: 26, height: 22)
+                }
+                .buttonStyle(IconButtonStyle())
+                .help("Atidaryti failą")
+
+                Button {
+                    model.revealFile(file)
+                } label: {
+                    Image(systemName: "folder")
+                        .frame(width: 26, height: 22)
+                }
+                .buttonStyle(IconButtonStyle())
+                .help("Parodyti Finder lange")
+            }
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color.black.opacity(0.18))
+                .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.white.opacity(0.08), lineWidth: 1))
+        )
+    }
+
+    private var ext: String {
+        file.pathExtension.lowercased()
+    }
+
+    private var kind: String {
+        switch ext {
+        case "srt": return "SRT"
+        case "txt": return "TXT"
+        case "vtt": return "VTT"
+        case "ass": return "ASS"
+        case "mp4", "mov", "m4v": return "VIDEO"
+        default: return ext.uppercased()
+        }
+    }
+
+    private var icon: String {
+        switch ext {
+        case "srt": return "captions.bubble.fill"
+        case "txt": return "doc.text.fill"
+        case "vtt": return "globe"
+        case "ass": return "textformat.size"
+        case "mp4", "mov", "m4v": return "film.fill"
+        default: return "doc.fill"
+        }
+    }
+
+    private var tint: Color {
+        switch ext {
+        case "srt": return .cyan
+        case "txt": return .green
+        case "vtt": return .blue
+        case "ass": return .purple
+        case "mp4", "mov", "m4v": return .orange
+        default: return .white.opacity(0.72)
+        }
     }
 }
 
@@ -2535,6 +2709,16 @@ private struct TinyButtonStyle: ButtonStyle {
             .padding(.vertical, 6)
             .background(configuration.isPressed ? Color.white.opacity(0.18) : Color.white.opacity(0.1))
             .foregroundStyle(.white)
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+    }
+}
+
+private struct IconButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 11, weight: .bold))
+            .background(configuration.isPressed ? Color.white.opacity(0.18) : Color.white.opacity(0.09))
+            .foregroundStyle(.white.opacity(0.86))
             .clipShape(RoundedRectangle(cornerRadius: 6))
     }
 }
