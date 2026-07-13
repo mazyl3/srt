@@ -148,7 +148,7 @@ TestRuns/sample-burned.mp4
 The app can check a small manifest:
 
 ```text
-https://raw.githubusercontent.com/mazyl3/srt/refs/heads/main/version.json
+https://api.github.com/repos/mazyl3/srt/contents/version.json?ref=main
 ```
 
 Current release DMG URL is stored in `version.json`. The app does not replace itself while running; it opens the download URL so the user can install the new DMG manually.

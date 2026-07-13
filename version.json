@@ -1,7 +1,7 @@
 {
   "version": "1.0.0",
-  "build": "117",
-  "downloadURL": "https://github.com/mazyl3/srt/releases/download/v1.0.0-build117/SRT-Forge-Setup.dmg",
-  "releaseNotes": "Version 1.0.0 build 117: uses a more stable GitHub raw refs/heads/main update manifest URL and keeps conservative ASR artifact cleanup, ASR Quality Report, SRT QA, PolyWAV BOOM/LAV channel selection, Burned MP4 export, Lithuanian/English output, offline setup, and update checking.",
+  "build": "118",
+  "downloadURL": "https://github.com/mazyl3/srt/releases/download/v1.0.0-build118/SRT-Forge-Setup.dmg",
+  "releaseNotes": "Version 1.0.0 build 118: makes update checking more robust by supporting GitHub Contents API manifests as well as direct JSON manifests, while keeping conservative ASR artifact cleanup, ASR Quality Report, SRT QA, PolyWAV BOOM/LAV channel selection, Burned MP4 export, Lithuanian/English output, offline setup, and update checking.",
   "minimumSystemVersion": "13.0"
 }

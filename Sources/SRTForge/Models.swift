@@ -309,6 +309,11 @@ struct AppUpdate: Codable, Equatable {
     let minimumSystemVersion: String?
 }
 
+struct GitHubContentsManifest: Codable {
+    let content: String
+    let encoding: String?
+}
+
 struct ASRQualityReport: Equatable {
     var files: [ASRQualityFileReport] = []
 

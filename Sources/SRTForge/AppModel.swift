@@ -628,7 +628,8 @@ final class AppModel: ObservableObject {
                     throw PipelineError.commandFailed("Atnaujinimų serveris grąžino HTTP \(http.statusCode).")
                 }
 
-                let update = try JSONDecoder().decode(AppUpdate.self, from: data)
+                let manifestData = try Self.extractUpdateManifestData(data)
+                let update = try JSONDecoder().decode(AppUpdate.self, from: manifestData)
 
                 if Self.isUpdate(update, newerThanVersion: currentShortVersion, currentBuild: currentBuildNumber) {
                     availableUpdate = update
@@ -653,6 +654,25 @@ final class AppModel: ObservableObject {
     func openAvailableUpdate() {
         guard let availableUpdate else { return }
         NSWorkspace.shared.open(availableUpdate.downloadURL)
+    }
+
+    private static func extractUpdateManifestData(_ data: Data) throws -> Data {
+        if (try? JSONDecoder().decode(AppUpdate.self, from: data)) != nil {
+            return data
+        }
+
+        let wrapper = try JSONDecoder().decode(GitHubContentsManifest.self, from: data)
+        guard wrapper.encoding?.lowercased() == "base64" || wrapper.encoding == nil else {
+            throw PipelineError.commandFailed("Atnaujinimų manifestas GitHub API atsakyme naudoja nepalaikomą encoding: \(wrapper.encoding ?? "nežinomas").")
+        }
+
+        let cleaned = wrapper.content
+            .replacingOccurrences(of: "\n", with: "")
+            .replacingOccurrences(of: "\r", with: "")
+        guard let decoded = Data(base64Encoded: cleaned) else {
+            throw PipelineError.commandFailed("Nepavyko iškoduoti GitHub API version.json turinio.")
+        }
+        return decoded
     }
 
     var primaryActionTitle: String {
