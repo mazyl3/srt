@@ -605,11 +605,12 @@ final class AppModel: ObservableObject {
                 let update = try JSONDecoder().decode(AppUpdate.self, from: data)
                 availableUpdate = update
 
-                if Self.isVersion(update.version, newerThan: currentShortVersion) {
-                    updateStatusMessage = "Yra nauja versija \(update.version)."
-                    append(.success, "Rastas atnaujinimas: \(update.version)")
+                if Self.isUpdate(update, newerThanVersion: currentShortVersion, currentBuild: currentBuildNumber) {
+                    let buildLabel = update.build.map { " (\($0))" } ?? ""
+                    updateStatusMessage = "Yra nauja versija \(update.version)\(buildLabel)."
+                    append(.success, "Rastas atnaujinimas: \(update.version)\(buildLabel)")
                 } else {
-                    updateStatusMessage = "Naudoji naujausią versiją \(currentShortVersion)."
+                    updateStatusMessage = "Naudoji naujausią versiją \(currentShortVersion) (\(currentBuildNumber))."
                     append(.success, "Atnaujinimų nėra.")
                 }
             } catch {
@@ -896,6 +897,20 @@ final class AppModel: ObservableObject {
 
     private var currentShortVersion: String {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.1.0"
+    }
+
+    private var currentBuildNumber: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "1"
+    }
+
+    private static func isUpdate(_ candidate: AppUpdate, newerThanVersion currentVersion: String, currentBuild: String) -> Bool {
+        if isVersion(candidate.version, newerThan: currentVersion) {
+            return true
+        }
+        if isVersion(currentVersion, newerThan: candidate.version) {
+            return false
+        }
+        return (Int(candidate.build ?? "") ?? 0) > (Int(currentBuild) ?? 0)
     }
 
     private static func isVersion(_ candidate: String, newerThan current: String) -> Bool {
