@@ -1295,6 +1295,9 @@ private struct SimpleSettingsPanel: View {
                     HelpTip(title: "Eksportas", message: "Pasirink, ar reikia tik SRT, video su įdegintais subtitrais, ar abiejų rezultatų.")
                 }
                 VideoExportSelector()
+                if model.settings.videoExportMode.burnsSubtitlesIntoVideo {
+                    BurnedSubtitleStyleSelector()
+                }
             }
         }
         .padding(16)
@@ -1354,7 +1357,12 @@ private struct PowerSettingsPanel: View {
                 }
 
                 SettingBlock(title: "Video eksportas", help: "SRT režimas skirtas montavimo programoms. MP4 režimas sukuria naują video kopiją su vidiniu subtitle track; originalas neperrašomas.") {
-                    VideoExportSelector()
+                    VStack(alignment: .leading, spacing: 9) {
+                        VideoExportSelector()
+                        if model.settings.videoExportMode.burnsSubtitlesIntoVideo {
+                            BurnedSubtitleStyleSelector()
+                        }
+                    }
                 }
 
                 SettingBlock(title: "Subtitrų skaitomumas", help: "Trumpesni segmentai lengviau skaitomi. Programa taip pat gali sutvarkyti dialogo brūkšnius ir sakinių pabaigas.") {
@@ -1611,7 +1619,7 @@ private struct VideoExportSelector: View {
     @EnvironmentObject private var model: AppModel
 
     var body: some View {
-        HStack(spacing: 7) {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 112), spacing: 7)], spacing: 7) {
             ForEach(VideoExportMode.allCases) { mode in
                 Button {
                     model.settings.videoExportMode = mode
@@ -1642,6 +1650,46 @@ private struct VideoExportSelector: View {
             return .orange
         case .srtAndVideo:
             return .green
+        case .burnedVideoOnly:
+            return .pink
+        case .srtAndBurnedVideo:
+            return .purple
+        }
+    }
+}
+
+private struct BurnedSubtitleStyleSelector: View {
+    @EnvironmentObject private var model: AppModel
+
+    var body: some View {
+        HStack(spacing: 7) {
+            ForEach(BurnedSubtitleStyle.allCases) { style in
+                Button {
+                    model.settings.burnedSubtitleStyle = style
+                } label: {
+                    VStack(spacing: 2) {
+                        Text(style.rawValue)
+                            .font(.system(size: 11, weight: .bold))
+                        Text(style.subtitle)
+                            .font(.system(size: 9, weight: .semibold))
+                            .opacity(0.72)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 6)
+                }
+                .buttonStyle(ModeButtonStyle(isSelected: model.settings.burnedSubtitleStyle == style, tint: tint(style)))
+            }
+        }
+    }
+
+    private func tint(_ style: BurnedSubtitleStyle) -> Color {
+        switch style {
+        case .clean:
+            return .cyan
+        case .bold:
+            return .pink
+        case .highContrast:
+            return .yellow
         }
     }
 }

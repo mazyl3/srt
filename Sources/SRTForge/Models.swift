@@ -72,8 +72,10 @@ enum SubtitleOutputMode: String, CaseIterable, Identifiable {
 
 enum VideoExportMode: String, CaseIterable, Identifiable {
     case srtOnly = "SRT"
-    case videoOnly = "MP4"
-    case srtAndVideo = "SRT + MP4"
+    case videoOnly = "Track MP4"
+    case srtAndVideo = "SRT + Track"
+    case burnedVideoOnly = "Burned MP4"
+    case srtAndBurnedVideo = "SRT + Burned"
 
     var id: String { rawValue }
 
@@ -82,9 +84,13 @@ enum VideoExportMode: String, CaseIterable, Identifiable {
         case .srtOnly:
             return "tik failas"
         case .videoOnly:
-            return "tik video"
+            return "įjungiamas"
         case .srtAndVideo:
-            return "abu"
+            return "track + srt"
+        case .burnedVideoOnly:
+            return "įkeptas"
+        case .srtAndBurnedVideo:
+            return "burn + srt"
         }
     }
 
@@ -93,9 +99,35 @@ enum VideoExportMode: String, CaseIterable, Identifiable {
         case .srtOnly:
             return "Sukuria redagavimo programoms tinkamą SRT failą. Originalus video neliečiamas."
         case .videoOnly:
-            return "Sukuria naują MP4 kopiją su vidiniu subtitle track. SRT naudojamas laikinai ir lieka tik jei įjungtas SRT + MP4."
+            return "Sukuria naują MP4 kopiją su vidiniu subtitle track. Subtitrus grotuve galima įjungti arba išjungti."
         case .srtAndVideo:
-            return "Sukuria ir SRT failą, ir naują MP4 video kopiją su vidiniais subtitrais."
+            return "Sukuria ir SRT failą, ir naują MP4 video kopiją su vidiniu subtitle track."
+        case .burnedVideoOnly:
+            return "Sukuria naują MP4, kuriame subtitrai įkepti tiesiai į video vaizdą. Tam ffmpeg turi palaikyti subtitles/libass filtrą."
+        case .srtAndBurnedVideo:
+            return "Sukuria SRT failą ir naują MP4, kuriame subtitrai įkepti tiesiai į video vaizdą."
+        }
+    }
+
+    var createsVideo: Bool {
+        self != .srtOnly
+    }
+
+    var keepsSRTOutput: Bool {
+        switch self {
+        case .srtOnly, .srtAndVideo, .srtAndBurnedVideo:
+            return true
+        case .videoOnly, .burnedVideoOnly:
+            return false
+        }
+    }
+
+    var burnsSubtitlesIntoVideo: Bool {
+        switch self {
+        case .burnedVideoOnly, .srtAndBurnedVideo:
+            return true
+        case .srtOnly, .videoOnly, .srtAndVideo:
+            return false
         }
     }
 }

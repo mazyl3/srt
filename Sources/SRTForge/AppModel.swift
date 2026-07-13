@@ -181,11 +181,11 @@ final class AppModel: ObservableObject {
     }
 
     var readinessTotal: Int {
-        settings.videoExportMode == .srtOnly ? 4 : 5
+        settings.videoExportMode.createsVideo ? 5 : 4
     }
 
     var videoExportInputIsValid: Bool {
-        guard settings.videoExportMode != .srtOnly else { return true }
+        guard settings.videoExportMode.createsVideo else { return true }
         let inputs = jobs.isEmpty ? [selectedFile].compactMap { $0 } : jobs.map(\.inputFile)
         guard !inputs.isEmpty else { return true }
         return inputs.allSatisfy(Self.isLikelyVideoFile)
@@ -631,9 +631,13 @@ final class AppModel: ObservableObject {
         case .srtOnly:
             return "Kurti SRT"
         case .videoOnly:
-            return "Kurti MP4"
+            return "Kurti Track MP4"
         case .srtAndVideo:
-            return "Kurti SRT + MP4"
+            return "Kurti SRT + Track"
+        case .burnedVideoOnly:
+            return "Kurti Burned MP4"
+        case .srtAndBurnedVideo:
+            return "Kurti SRT + Burned"
         }
     }
 
@@ -646,6 +650,10 @@ final class AppModel: ObservableObject {
             return "film.fill"
         case .srtAndVideo:
             return "captions.bubble.fill"
+        case .burnedVideoOnly:
+            return "flame.fill"
+        case .srtAndBurnedVideo:
+            return "text.below.photo.fill"
         }
     }
 

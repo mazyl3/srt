@@ -15,6 +15,7 @@ SRT Forge is a local Mac power tool for subtitle generation:
 - `whisper.cpp` transcribes it with `ggml-large-v3.bin`.
 - The final `.srt` is saved next to the original file, or in a folder you choose.
 - Optionally create a new `.mp4` copy with an internal subtitle track.
+- Optionally create a new burned-in `.mp4` copy when ffmpeg supports the subtitles/libass filter.
 - Check for updates from a small GitHub-hosted manifest.
 
 ## SRT Quality Engine
@@ -149,5 +150,5 @@ This is the first working app version. It is designed so the next improvements c
 - model picker with `large-v3` and faster alternatives,
 - waveform preview,
 - subtitle editor,
-- true burn-in subtitles into video,
+- subtitle preview and timing editor,
 - export to `.vtt` and `.txt`.

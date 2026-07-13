@@ -53,9 +53,10 @@ struct SubtitlePipeline {
         let lithuanianSRT = lithuanianOutputBase.appendingPathExtension("srt")
         let englishOutputBase = outputBase.appendingPathExtension("en")
         let englishSRT = englishOutputBase.appendingPathExtension("srt")
-        let burnedVideo = outputBase.appendingPathExtension("subtitled").appendingPathExtension("mp4")
+        let subtitleTrackVideo = outputBase.appendingPathExtension("subtitled").appendingPathExtension("mp4")
+        let burnedInVideo = outputBase.appendingPathExtension("burned").appendingPathExtension("mp4")
 
-        for url in [lithuanianSRT, englishSRT, burnedVideo] where FileManager.default.fileExists(atPath: url.path) {
+        for url in [lithuanianSRT, englishSRT, subtitleTrackVideo, burnedInVideo] where FileManager.default.fileExists(atPath: url.path) {
             try FileManager.default.removeItem(at: url)
         }
 
@@ -171,7 +172,7 @@ struct SubtitlePipeline {
             : englishSRT
         var createdVideo: URL?
 
-        if settings.videoExportMode != .srtOnly {
+        if settings.videoExportMode.createsVideo {
             guard FileManager.default.fileExists(atPath: subtitleForVideo.path) else {
                 throw PipelineError.commandFailed("Video eksportui nerastas SRT failas: \(subtitleForVideo.path)")
             }
@@ -181,21 +182,37 @@ struct SubtitlePipeline {
             }
 
             await updatePhase(.renderingVideo, 0.94)
-            await log(.info, "Kuriama nauja MP4 kopija su vidiniu subtitle track. Originalus video nebus keičiamas.")
-            try await Self.createVideoWithSubtitleTrack(
-                runner: runner,
-                ffmpegPath: ffmpegPath,
-                inputVideo: safeInput,
-                subtitleFile: subtitleForVideo,
-                outputVideo: burnedVideo,
-                languageCode: settings.languageCode,
-                log: log,
-                cancellation: cancellation
-            )
-            createdVideo = burnedVideo
-            await log(.success, "MP4 su subtitle track sukurtas: \(burnedVideo.path)")
+            if settings.videoExportMode.burnsSubtitlesIntoVideo {
+                await log(.info, "Kuriama nauja MP4 kopija su įkeptais subtitrais. Originalus video nebus keičiamas.")
+                try await Self.createBurnedInSubtitleVideo(
+                    runner: runner,
+                    ffmpegPath: ffmpegPath,
+                    inputVideo: safeInput,
+                    subtitleFile: subtitleForVideo,
+                    outputVideo: burnedInVideo,
+                    style: settings.burnedSubtitleStyle,
+                    log: log,
+                    cancellation: cancellation
+                )
+                createdVideo = burnedInVideo
+                await log(.success, "MP4 su įkeptais subtitrais sukurtas: \(burnedInVideo.path)")
+            } else {
+                await log(.info, "Kuriama nauja MP4 kopija su vidiniu subtitle track. Originalus video nebus keičiamas.")
+                try await Self.createVideoWithSubtitleTrack(
+                    runner: runner,
+                    ffmpegPath: ffmpegPath,
+                    inputVideo: safeInput,
+                    subtitleFile: subtitleForVideo,
+                    outputVideo: subtitleTrackVideo,
+                    languageCode: settings.languageCode,
+                    log: log,
+                    cancellation: cancellation
+                )
+                createdVideo = subtitleTrackVideo
+                await log(.success, "MP4 su subtitle track sukurtas: \(subtitleTrackVideo.path)")
+            }
 
-            if settings.videoExportMode == .videoOnly {
+            if !settings.videoExportMode.keepsSRTOutput {
                 for srt in createdSRTs {
                     try? FileManager.default.removeItem(at: srt)
                 }
@@ -212,9 +229,11 @@ struct SubtitlePipeline {
 
         await updatePhase(.complete, 1.0)
         if createdVideo != nil && settings.videoExportMode == .videoOnly {
-            await log(.success, "MP4 eksportas baigtas: \(burnedVideo.lastPathComponent)")
+            await log(.success, "MP4 eksportas baigtas: \(createdVideo?.lastPathComponent ?? "video.mp4")")
+        } else if createdVideo != nil && settings.videoExportMode == .burnedVideoOnly {
+            await log(.success, "Burned MP4 eksportas baigtas: \(createdVideo?.lastPathComponent ?? "video.mp4")")
         } else if createdVideo != nil {
-            await log(.success, "SRT ir MP4 eksportas baigtas: \(burnedVideo.lastPathComponent)")
+            await log(.success, "SRT ir MP4 eksportas baigtas: \(createdVideo?.lastPathComponent ?? "video.mp4")")
         } else if wantsLithuanian && wantsEnglish {
             await log(.success, "SRT pora sukurta: \(lithuanianSRT.lastPathComponent) ir \(englishSRT.lastPathComponent)")
         } else if wantsEnglish {
@@ -441,6 +460,79 @@ struct SubtitlePipeline {
               fileSize(at: outputVideo) > 10_000 else {
             throw PipelineError.commandFailed("MP4 su subtitrais nebuvo sukurtas arba yra per mažas: \(outputVideo.path)")
         }
+    }
+
+    private static func createBurnedInSubtitleVideo(
+        runner: ProcessRunner,
+        ffmpegPath: String,
+        inputVideo: URL,
+        subtitleFile: URL,
+        outputVideo: URL,
+        style: BurnedSubtitleStyle,
+        log: @escaping @MainActor (LogEntry.LogLevel, String) -> Void,
+        cancellation: @escaping () -> Bool
+    ) async throws {
+        guard ffmpegSupportsVideoFilter("subtitles", ffmpegPath: ffmpegPath) else {
+            throw PipelineError.commandFailed("Šis ffmpeg neturi subtitles/libass filtro, todėl negali įkepti subtitrų į video. Įdiek ffmpeg build su libass palaikymu arba rinkis Track MP4.")
+        }
+
+        try await runner.run(
+            executable: ffmpegPath,
+            arguments: [
+                "-y",
+                "-i", inputVideo.path,
+                "-vf", "subtitles=\(ffmpegFilterEscapedPath(subtitleFile.path)):force_style='\(style.ffmpegForceStyle)'",
+                "-map", "0:v:0",
+                "-map", "0:a?",
+                "-c:v", "libx264",
+                "-preset", "medium",
+                "-crf", "18",
+                "-pix_fmt", "yuv420p",
+                "-c:a", "copy",
+                "-movflags", "+faststart",
+                outputVideo.path
+            ],
+            log: log,
+            cancellation: cancellation
+        )
+
+        guard FileManager.default.fileExists(atPath: outputVideo.path),
+              fileSize(at: outputVideo) > 10_000 else {
+            throw PipelineError.commandFailed("Burned MP4 nebuvo sukurtas arba yra per mažas: \(outputVideo.path)")
+        }
+    }
+
+    private static func ffmpegSupportsVideoFilter(_ name: String, ffmpegPath: String) -> Bool {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: ffmpegPath)
+        process.arguments = ["-hide_banner", "-filters"]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = Pipe()
+
+        do {
+            try process.run()
+            process.waitUntilExit()
+        } catch {
+            return false
+        }
+
+        guard process.terminationStatus == 0 else { return false }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        let output = String(data: data, encoding: .utf8) ?? ""
+        return output
+            .split(whereSeparator: \.isNewline)
+            .contains { line in
+                line.split(separator: " ").contains(name[...])
+            }
+    }
+
+    private static func ffmpegFilterEscapedPath(_ path: String) -> String {
+        path
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: ":", with: "\\:")
+            .replacingOccurrences(of: "'", with: "\\'")
+            .replacingOccurrences(of: ",", with: "\\,")
     }
 
     private static func subtitleLanguageCode(_ languageCode: String) -> String {
