@@ -14,7 +14,18 @@ if [[ ! -f "${MODEL_FILE}" ]]; then
   curl -L --fail --continue-at - --progress-bar "${MODEL_URL}" -o "${MODEL_FILE}"
 fi
 
-if ! command -v ffmpeg >/dev/null 2>&1; then
+FFMPEG_BIN=""
+for candidate in \
+  "/opt/homebrew/opt/ffmpeg-full/bin/ffmpeg" \
+  "/usr/local/opt/ffmpeg-full/bin/ffmpeg" \
+  "$(command -v ffmpeg || true)"; do
+  if [[ -n "${candidate}" && -x "${candidate}" ]]; then
+    FFMPEG_BIN="${candidate}"
+    break
+  fi
+done
+
+if [[ -z "${FFMPEG_BIN}" ]]; then
   echo "ffmpeg not found."
   exit 1
 fi
@@ -32,7 +43,7 @@ if [[ ! -f "${SOURCE_AUDIO}" ]]; then
   exit 1
 fi
 
-ffmpeg -y \
+"${FFMPEG_BIN}" -y \
   -i "${SOURCE_AUDIO}" \
   -map 0:a:0 \
   -vn \
@@ -66,7 +77,7 @@ whisper-cli \
 
 test -s "${TEST_DIR}/sample.srt"
 
-ffmpeg -y \
+"${FFMPEG_BIN}" -y \
   -f lavfi \
   -i color=c=0x102030:s=1280x720:d=3 \
   -i "${TEST_DIR}/sample.wav" \
@@ -76,7 +87,7 @@ ffmpeg -y \
   -c:a aac \
   "${TEST_DIR}/sample-video.mp4" >/tmp/srtforge-smoke-video-source.log 2>&1
 
-ffmpeg -y \
+"${FFMPEG_BIN}" -y \
   -i "${TEST_DIR}/sample-video.mp4" \
   -i "${TEST_DIR}/sample.srt" \
   -map 0:v:0 \
@@ -91,6 +102,33 @@ ffmpeg -y \
 
 test -s "${TEST_DIR}/sample-subtitled.mp4"
 
+FFMPEG_FILTERS="$("${FFMPEG_BIN}" -hide_banner -filters 2>/dev/null || true)"
+if grep -Eq '(^|[[:space:]])subtitles([[:space:]]|$)' <<<"${FFMPEG_FILTERS}"; then
+  ESCAPED_SRT="${TEST_DIR}/sample.srt"
+  ESCAPED_SRT="${ESCAPED_SRT//\\/\\\\}"
+  ESCAPED_SRT="${ESCAPED_SRT//:/\\:}"
+  ESCAPED_SRT="${ESCAPED_SRT//,/\\,}"
+
+  "${FFMPEG_BIN}" -y \
+    -i "${TEST_DIR}/sample-video.mp4" \
+    -vf "subtitles=${ESCAPED_SRT}:force_style='FontName=Helvetica,FontSize=24,PrimaryColour=&H00FFFFFF,OutlineColour=&HAA000000,BorderStyle=1,Outline=2,Shadow=0,Alignment=2,MarginV=54'" \
+    -map 0:v:0 \
+    -map '0:a?' \
+    -c:v libx264 \
+    -preset veryfast \
+    -crf 23 \
+    -pix_fmt yuv420p \
+    -c:a copy \
+    "${TEST_DIR}/sample-burned.mp4" >/tmp/srtforge-smoke-video-burned.log 2>&1
+
+  test -s "${TEST_DIR}/sample-burned.mp4"
+else
+  echo "ffmpeg subtitles/libass filter not found; burned-in smoke test skipped."
+fi
+
 echo "Smoke test passed:"
 echo "${TEST_DIR}/sample.srt"
 echo "${TEST_DIR}/sample-subtitled.mp4"
+if [[ -s "${TEST_DIR}/sample-burned.mp4" ]]; then
+  echo "${TEST_DIR}/sample-burned.mp4"
+fi

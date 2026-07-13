@@ -2,7 +2,7 @@ import Foundation
 
 enum DependencyResolver {
     static func report(settings: AppSettings) -> DependencyReport {
-        let ffmpegPath = resolveBinary(preferred: settings.ffmpegPath, names: ["ffmpeg"])
+        let ffmpegPath = resolveFFmpeg(preferred: settings.ffmpegPath)
         let whisperPath = resolveBinary(preferred: settings.whisperPath, names: ["whisper-cli", "whisper-cpp", "main"])
         let modelURL = URL(fileURLWithPath: settings.modelPath.expandingTilde)
 
@@ -49,6 +49,53 @@ enum DependencyResolver {
         }
 
         return nil
+    }
+
+    private static func resolveFFmpeg(preferred: String) -> String? {
+        if preferred != "auto" {
+            let expanded = preferred.expandingTilde
+            if FileManager.default.isExecutableFile(atPath: expanded) {
+                return expanded
+            }
+            return nil
+        }
+
+        let fullCandidates = [
+            "/opt/homebrew/opt/ffmpeg-full/bin/ffmpeg",
+            "/usr/local/opt/ffmpeg-full/bin/ffmpeg"
+        ]
+
+        if let full = fullCandidates.first(where: { FileManager.default.isExecutableFile(atPath: $0) }),
+           supportsFilter("subtitles", executable: full) {
+            return full
+        }
+
+        return resolveBinary(preferred: "auto", names: ["ffmpeg"])
+    }
+
+    private static func supportsFilter(_ name: String, executable: String) -> Bool {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: executable)
+        process.arguments = ["-hide_banner", "-filters"]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = Pipe()
+
+        do {
+            try process.run()
+            process.waitUntilExit()
+        } catch {
+            return false
+        }
+
+        guard process.terminationStatus == 0 else { return false }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        let output = String(data: data, encoding: .utf8) ?? ""
+        return output
+            .split(whereSeparator: \.isNewline)
+            .contains { line in
+                line.split(separator: " ").contains(name[...])
+            }
     }
 
     static func isModelComplete(at url: URL) -> Bool {

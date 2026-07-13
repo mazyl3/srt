@@ -942,14 +942,17 @@ final class AppModel: ObservableObject {
                     : "/usr/local/bin/brew"
 
                 progress = 0.15
-                statusMessage = "Diegiami ffmpeg, Whisper variklis ir modelio siuntimo įrankis."
+                statusMessage = "Diegiamas ffmpeg-full, Whisper variklis ir modelio siuntimo įrankis."
 
                 try await runner.run(
                     executable: "/bin/zsh",
                     arguments: [
                         "-lc",
                         """
-                        \(brewPath) list ffmpeg >/dev/null 2>&1 || \(brewPath) install ffmpeg
+                        \(brewPath) list ffmpeg-full >/dev/null 2>&1 || \(brewPath) install ffmpeg-full
+                        FFMPEG_BIN="/opt/homebrew/opt/ffmpeg-full/bin/ffmpeg"
+                        [ -x "$FFMPEG_BIN" ] || FFMPEG_BIN="/usr/local/opt/ffmpeg-full/bin/ffmpeg"
+                        "$FFMPEG_BIN" -hide_banner -filters 2>/dev/null | grep -Eq '(^|[[:space:]])subtitles([[:space:]]|$)'
                         \(brewPath) list whisper-cpp >/dev/null 2>&1 || \(brewPath) install whisper-cpp
                         /usr/bin/python3 -m pip install --user --upgrade 'huggingface_hub[hf_xet]'
                         """

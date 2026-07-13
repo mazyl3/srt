@@ -89,7 +89,7 @@ bash Scripts/install_dependencies.sh
 
 This installs:
 
-- `ffmpeg`
+- `ffmpeg-full` with subtitles/libass support
 - `whisper-cpp`
 - Hugging Face downloader with `hf-xet`
 - Whisper `ggml-large-v3.bin`
@@ -124,11 +124,12 @@ To verify the actual audio-to-SRT pipeline without waiting for the full 3.1 GB m
 bash Scripts/run_smoke_test.sh
 ```
 
-This downloads a tiny test model, creates a short macOS voice sample, converts it with `ffmpeg`, transcribes it with `whisper-cli`, and writes:
+This downloads a tiny test model, creates a short macOS voice sample, converts it with `ffmpeg-full`, transcribes it with `whisper-cli`, and writes:
 
 ```text
 TestRuns/sample.srt
 TestRuns/sample-subtitled.mp4
+TestRuns/sample-burned.mp4
 ```
 
 ## Updates

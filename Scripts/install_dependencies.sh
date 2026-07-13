@@ -14,8 +14,28 @@ if ! command -v brew >/dev/null 2>&1; then
   exit 1
 fi
 
-echo "Diegiamas ffmpeg..."
-brew list ffmpeg >/dev/null 2>&1 || brew install ffmpeg
+echo "Diegiamas ffmpeg-full su libass/subtitles palaikymu..."
+brew list ffmpeg-full >/dev/null 2>&1 || brew install ffmpeg-full
+
+FFMPEG_BIN=""
+for candidate in \
+  "/opt/homebrew/opt/ffmpeg-full/bin/ffmpeg" \
+  "/usr/local/opt/ffmpeg-full/bin/ffmpeg" \
+  "$(command -v ffmpeg || true)"; do
+  if [[ -n "${candidate}" && -x "${candidate}" ]]; then
+    FFMPEG_BIN="${candidate}"
+    break
+  fi
+done
+if [[ -z "${FFMPEG_BIN}" ]]; then
+  echo "ffmpeg nerastas po diegimo."
+  exit 1
+fi
+FFMPEG_FILTERS="$("${FFMPEG_BIN}" -hide_banner -filters 2>/dev/null || true)"
+if ! grep -Eq '(^|[[:space:]])subtitles([[:space:]]|$)' <<<"${FFMPEG_FILTERS}"; then
+  echo "ffmpeg neturi subtitles/libass filtro. Burned-in MP4 neveiks."
+  exit 1
+fi
 
 echo "Diegiamas whisper.cpp..."
 brew list whisper-cpp >/dev/null 2>&1 || brew install whisper-cpp
@@ -41,5 +61,5 @@ fi
 echo
 echo "Paruosta."
 echo "Modelis: ${MODEL_FILE}"
-echo "ffmpeg: $(command -v ffmpeg)"
+echo "ffmpeg: ${FFMPEG_BIN}"
 echo "whisper.cpp: $(command -v whisper-cli || command -v whisper-cpp || true)"
