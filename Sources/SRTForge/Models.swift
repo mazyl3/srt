@@ -308,6 +308,71 @@ struct AppUpdate: Codable, Equatable {
     let minimumSystemVersion: String?
 }
 
+struct ASRQualityReport: Equatable {
+    var files: [ASRQualityFileReport] = []
+
+    var totalBlocks: Int {
+        files.map(\.blocks).reduce(0, +)
+    }
+
+    var issueCount: Int {
+        files.map(\.issueCount).reduce(0, +)
+    }
+
+    var statusTitle: String {
+        issueCount == 0 ? "ASR tekstas atrodo patikimas" : "ASR tekstą reikia peržiūrėti"
+    }
+
+    var statusDetail: String {
+        if files.isEmpty {
+            return "ASR teksto patikrai nėra SRT failų."
+        }
+        if issueCount == 0 {
+            return "\(totalBlocks) blokai patikrinti. Hallucination ar kartojimosi signalų nerasta."
+        }
+        return "\(totalBlocks) blokai patikrinti. Rasta \(issueCount) transkripcijos kokybės signalų."
+    }
+}
+
+struct ASRQualityFileReport: Identifiable, Equatable {
+    let id = UUID()
+    let fileName: String
+    var blocks = 0
+    var textCharacters = 0
+    var duration = 0.0
+    var repeatedText = 0
+    var repeatedPhrases = 0
+    var promptLeakage = 0
+    var lowTextDensity = 0
+    var highTextDensity = 0
+    var issues: [ASRQualityIssue] = []
+
+    var issueCount: Int {
+        repeatedText + repeatedPhrases + promptLeakage + lowTextDensity + highTextDensity
+    }
+
+    var textDensityLabel: String {
+        guard duration > 0 else { return "n/a" }
+        return String(format: "%.1f chars/s", Double(textCharacters) / duration)
+    }
+}
+
+struct ASRQualityIssue: Identifiable, Equatable {
+    let id = UUID()
+    let kind: Kind
+    let timecode: String
+    let message: String
+    let textPreview: String
+
+    enum Kind: String, Equatable {
+        case repeatText = "Kartojasi"
+        case repeatPhrase = "Frazė"
+        case promptLeak = "Prompt"
+        case lowDensity = "Mažai teksto"
+        case highDensity = "Tankis"
+    }
+}
+
 struct SRTQAReport: Equatable {
     var files: [SRTQAFileReport] = []
 
@@ -444,6 +509,7 @@ struct TranscriptionJob: Identifiable, Equatable {
     let id = UUID()
     let inputFile: URL
     var resultFile: URL?
+    var srtFiles: [URL] = []
     var phase: JobPhase = .idle
     var state: JobState = .waiting
     var progress: Double = 0

@@ -8,6 +8,7 @@ final class AppModel: ObservableObject {
     @Published var resultFile: URL?
     @Published var resultFiles: [URL] = []
     @Published var qualityReport: SRTQAReport?
+    @Published var asrQualityReport: ASRQualityReport?
     @Published var audioDiagnosticReport: AudioDiagnosticReport?
     @Published var isAnalyzingAudio = false
     @Published var jobs: [TranscriptionJob] = []
@@ -236,6 +237,7 @@ final class AppModel: ObservableObject {
         resultFile = nil
         resultFiles = []
         qualityReport = nil
+        asrQualityReport = nil
         audioDiagnosticReport = nil
         phase = .idle
         progress = 0
@@ -326,6 +328,7 @@ final class AppModel: ObservableObject {
         resultFile = nil
         resultFiles = []
         qualityReport = nil
+        asrQualityReport = nil
         logs.removeAll()
         append(.info, "Darbas pradėtas.")
 
@@ -354,6 +357,8 @@ final class AppModel: ObservableObject {
                 resultFile = result.primaryFile
                 resultFiles = result.allFiles
                 qualityReport = analyzeSRTFiles(result.srtFiles, settings: localSettings)
+                asrQualityReport = analyzeASRFiles(result.srtFiles)
+                logASRQualityReport(asrQualityReport)
                 phase = .complete
                 progress = 1
                 statusMessage = completionMessage(for: result)
@@ -394,6 +399,7 @@ final class AppModel: ObservableObject {
         resultFile = nil
         resultFiles = []
         qualityReport = nil
+        asrQualityReport = nil
         phase = .validating
         progress = 0
         logs.removeAll()
@@ -435,6 +441,11 @@ final class AppModel: ObservableObject {
             let completed = jobs.filter { $0.state == .complete }.count
             let failed = jobs.filter { $0.state == .failed }.count
             let cancelled = jobs.filter { $0.state == .cancelled }.count
+            let completedSRTs = jobs.flatMap(\.srtFiles)
+            resultFiles = jobs.compactMap(\.resultFile)
+            qualityReport = analyzeSRTFiles(completedSRTs, settings: localSettings)
+            asrQualityReport = analyzeASRFiles(completedSRTs)
+            logASRQualityReport(asrQualityReport)
 
             isRunning = false
             activeRunners.removeAll()
@@ -492,6 +503,7 @@ final class AppModel: ObservableObject {
 
             updateJob(item.id) {
                 $0.resultFile = result.primaryFile
+                $0.srtFiles = result.srtFiles
                 $0.phase = .complete
                 $0.state = .complete
                 $0.progress = 1
@@ -692,6 +704,207 @@ final class AppModel: ObservableObject {
 
         guard !reports.isEmpty else { return nil }
         return SRTQAReport(files: reports)
+    }
+
+    private func analyzeASRFiles(_ files: [URL]) -> ASRQualityReport? {
+        let reports = files
+            .filter { $0.pathExtension.lowercased() == "srt" }
+            .map(analyzeASRFile)
+
+        guard !reports.isEmpty else { return nil }
+        return ASRQualityReport(files: reports)
+    }
+
+    private func analyzeASRFile(_ url: URL) -> ASRQualityFileReport {
+        var report = ASRQualityFileReport(fileName: url.lastPathComponent)
+        guard let content = try? String(contentsOf: url, encoding: .utf8) else {
+            return report
+        }
+
+        let blocks = parseASRBlocks(content)
+        report.blocks = blocks.count
+        report.textCharacters = blocks.map { $0.text.count }.reduce(0, +)
+        if let first = blocks.first, let last = blocks.last {
+            report.duration = max(0, last.end - first.start)
+        }
+
+        var seenText: [String: Int] = [:]
+        var previousText = ""
+
+        for block in blocks {
+            let normalized = normalizedASRText(block.text)
+            guard !normalized.isEmpty else { continue }
+
+            if containsPromptLeakage(normalized) {
+                report.promptLeakage += 1
+                addASRIssue(
+                    kind: .promptLeak,
+                    timecode: Self.formatSRTTimestamp(block.start),
+                    message: "Tekste panašu į Whisper promptą arba instrukciją, ne realią kalbą.",
+                    text: block.text,
+                    to: &report
+                )
+            }
+
+            if normalized == previousText {
+                report.repeatedText += 1
+                addASRIssue(
+                    kind: .repeatText,
+                    timecode: Self.formatSRTTimestamp(block.start),
+                    message: "Tas pats subtitro tekstas kartojasi iš eilės.",
+                    text: block.text,
+                    to: &report
+                )
+            }
+
+            let count = (seenText[normalized] ?? 0) + 1
+            seenText[normalized] = count
+            if count == 3 {
+                report.repeatedText += 1
+                addASRIssue(
+                    kind: .repeatText,
+                    timecode: Self.formatSRTTimestamp(block.start),
+                    message: "Tas pats tekstas faile pasikartojo bent 3 kartus.",
+                    text: block.text,
+                    to: &report
+                )
+            }
+
+            if let phrase = repeatedAdjacentPhrase(in: normalized) {
+                report.repeatedPhrases += 1
+                addASRIssue(
+                    kind: .repeatPhrase,
+                    timecode: Self.formatSRTTimestamp(block.start),
+                    message: "Frazė kartojasi tame pačiame bloke: „\(phrase)“.",
+                    text: block.text,
+                    to: &report
+                )
+            }
+
+            let cps = Double(block.text.count) / max(0.1, block.end - block.start)
+            if cps > 34 {
+                report.highTextDensity += 1
+                addASRIssue(
+                    kind: .highDensity,
+                    timecode: Self.formatSRTTimestamp(block.start),
+                    message: String(format: "Labai tankus ASR tekstas: %.0f chars/s.", cps),
+                    text: block.text,
+                    to: &report
+                )
+            }
+
+            previousText = normalized
+        }
+
+        if report.duration > 60 {
+            let density = Double(report.textCharacters) / max(1, report.duration)
+            if density < 0.8 {
+                report.lowTextDensity += 1
+                addASRIssue(
+                    kind: .lowDensity,
+                    timecode: "viso failo",
+                    message: String(format: "Ilgas failas turi labai mažai teksto: %.1f chars/s.", density),
+                    text: "Gali būti blogas kanalas, tyla arba neatpažinta kalba.",
+                    to: &report
+                )
+            }
+        }
+
+        return report
+    }
+
+    private func logASRQualityReport(_ report: ASRQualityReport?) {
+        guard let report else { return }
+        if report.issueCount == 0 {
+            append(.success, "ASR kokybės patikra: įtartinų teksto signalų nerasta.")
+        } else {
+            append(.warning, "ASR kokybės patikra: rasta \(report.issueCount) transkripcijos signalų. Peržiūrėk ASR panelę.")
+        }
+    }
+
+    private func parseASRBlocks(_ content: String) -> [ASRBlock] {
+        let normalized = content
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+
+        return normalized.components(separatedBy: "\n\n").compactMap { block in
+            let lines = block
+                .components(separatedBy: "\n")
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .filter { !$0.isEmpty }
+
+            guard let timeIndex = lines.firstIndex(where: { $0.contains("-->") }) else { return nil }
+            let parts = lines[timeIndex].components(separatedBy: "-->")
+            guard parts.count == 2,
+                  let start = Self.parseSRTTimestamp(parts[0]),
+                  let end = Self.parseSRTTimestamp(parts[1]) else {
+                return nil
+            }
+            let text = Array(lines.dropFirst(timeIndex + 1))
+                .joined(separator: " ")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else { return nil }
+            return ASRBlock(start: start, end: max(end, start), text: text)
+        }
+    }
+
+    private func addASRIssue(
+        kind: ASRQualityIssue.Kind,
+        timecode: String,
+        message: String,
+        text: String,
+        to report: inout ASRQualityFileReport
+    ) {
+        guard report.issues.count < 8 else { return }
+        let preview = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        report.issues.append(
+            ASRQualityIssue(
+                kind: kind,
+                timecode: timecode,
+                message: message,
+                textPreview: preview.isEmpty ? "Teksto nėra." : preview
+            )
+        )
+    }
+
+    private func normalizedASRText(_ text: String) -> String {
+        text
+            .lowercased()
+            .folding(options: [.diacriticInsensitive], locale: .current)
+            .replacingOccurrences(of: #"[^a-z0-9ąčęėįšųūžĄČĘĖĮŠŲŪŽ ]+"#, with: " ", options: .regularExpression)
+            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func containsPromptLeakage(_ normalizedText: String) -> Bool {
+        let markers = [
+            "tvarkinga transkripcija",
+            "lietuviska skyryba",
+            "sakiniais ir dialogais",
+            "clear speech transcription",
+            "readable subtitle",
+            "punctuation and readable",
+            "translated into natural english"
+        ]
+        return markers.contains { normalizedText.contains($0) }
+    }
+
+    private func repeatedAdjacentPhrase(in normalizedText: String) -> String? {
+        let words = normalizedText.split(separator: " ").map(String.init)
+        guard words.count >= 6 else { return nil }
+
+        for length in stride(from: min(6, words.count / 2), through: 2, by: -1) {
+            guard words.count >= length * 2 else { continue }
+            for index in 0...(words.count - length * 2) {
+                let first = Array(words[index..<(index + length)])
+                let second = Array(words[(index + length)..<(index + length * 2)])
+                if first == second {
+                    return first.joined(separator: " ")
+                }
+            }
+        }
+
+        return nil
     }
 
     private func analyzeSRTFile(_ url: URL, settings: AppSettings) -> SRTQAFileReport {
@@ -1395,4 +1608,10 @@ private enum AudioDiagnosticAnalyzer {
         }
         return Double(output[range])
     }
+}
+
+private struct ASRBlock {
+    let start: Double
+    let end: Double
+    let text: String
 }

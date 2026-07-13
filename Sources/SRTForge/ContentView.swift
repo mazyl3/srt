@@ -391,6 +391,10 @@ private struct MainPanel: View {
 
                     StatusPanel()
 
+                    if model.asrQualityReport != nil {
+                        ASRQualityPanel()
+                    }
+
                     if model.qualityReport != nil {
                         SRTQualityPanel()
                     }
@@ -1061,6 +1065,153 @@ private struct ProgressRing: View {
         }
         .frame(width: 64, height: 64)
         .accessibilityLabel("Progresas \(Int(value * 100)) procentų")
+    }
+}
+
+private struct ASRQualityPanel: View {
+    @EnvironmentObject private var model: AppModel
+
+    var body: some View {
+        if let report = model.asrQualityReport {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(alignment: .top, spacing: 12) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill((report.issueCount == 0 ? Color.green : Color.red).opacity(0.16))
+                        Image(systemName: report.issueCount == 0 ? "text.badge.checkmark" : "brain.head.profile.fill")
+                            .font(.system(size: 20, weight: .bold))
+                            .foregroundStyle(report.issueCount == 0 ? .green : .red)
+                    }
+                    .frame(width: 42, height: 42)
+
+                    VStack(alignment: .leading, spacing: 5) {
+                        HStack(spacing: 7) {
+                            Text(report.statusTitle)
+                                .font(.system(size: 17, weight: .bold))
+                            HelpTip(
+                                title: "ASR kokybės patikra",
+                                message: "Patikrina ne SRT formatą, o pačią transkripciją: kartojimus, prompto nutekėjimą, įtartiną teksto tankį ir hallucination signalus."
+                            )
+                        }
+                        Text(report.statusDetail)
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(.white.opacity(0.58))
+                    }
+
+                    Spacer()
+
+                    QualityMetric(title: "Tekstas", value: "\(report.totalBlocks)", tint: .cyan)
+                    QualityMetric(title: "ASR signalai", value: "\(report.issueCount)", tint: report.issueCount == 0 ? .green : .red)
+                }
+
+                ForEach(report.files) { file in
+                    ASRQualityFileRow(file: file)
+                }
+            }
+            .padding(16)
+            .background(panelBackground)
+        }
+    }
+}
+
+private struct ASRQualityFileRow: View {
+    let file: ASRQualityFileReport
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            HStack(spacing: 10) {
+                Image(systemName: file.issueCount == 0 ? "checkmark.circle.fill" : "exclamationmark.bubble.fill")
+                    .foregroundStyle(file.issueCount == 0 ? .green : .red)
+                    .frame(width: 22)
+                Text(file.fileName)
+                    .font(.system(size: 12, weight: .bold))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Spacer()
+                Text(file.issueCount == 0 ? "ASR švarus" : "\(file.issueCount) signalai")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(file.issueCount == 0 ? .green : .red)
+            }
+
+            HStack(spacing: 7) {
+                QualityChip(title: "Blokai", value: file.blocks, tint: .cyan)
+                QualityChip(title: "Kartojasi", value: file.repeatedText, tint: .red)
+                QualityChip(title: "Frazės", value: file.repeatedPhrases, tint: .orange)
+                QualityChip(title: "Prompt", value: file.promptLeakage, tint: .pink)
+                QualityChip(title: "Tankis", value: file.lowTextDensity + file.highTextDensity, tint: .yellow)
+            }
+
+            HStack(spacing: 8) {
+                Text("Teksto tankis")
+                    .font(.system(size: 10, weight: .black))
+                    .foregroundStyle(.white.opacity(0.45))
+                Text(file.textDensityLabel)
+                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                    .foregroundStyle(.white.opacity(0.66))
+            }
+
+            if !file.issues.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("ASR problemų pavyzdžiai")
+                        .font(.system(size: 10, weight: .black))
+                        .foregroundStyle(.white.opacity(0.48))
+                    ForEach(file.issues) { issue in
+                        ASRIssueRow(issue: issue)
+                    }
+                }
+            }
+        }
+        .padding(11)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color.black.opacity(0.18))
+                .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.white.opacity(0.08), lineWidth: 1))
+        )
+    }
+}
+
+private struct ASRIssueRow: View {
+    let issue: ASRQualityIssue
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Text(issue.kind.rawValue)
+                .font(.system(size: 9, weight: .black, design: .rounded))
+                .foregroundStyle(tint)
+                .frame(width: 78, alignment: .leading)
+            Text(issue.timecode)
+                .font(.system(size: 9, weight: .bold, design: .monospaced))
+                .foregroundStyle(.white.opacity(0.50))
+                .frame(width: 82, alignment: .leading)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(issue.message)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.72))
+                    .lineLimit(1)
+                Text(issue.textPreview)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.44))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(Color.white.opacity(0.045))
+        )
+    }
+
+    private var tint: Color {
+        switch issue.kind {
+        case .repeatText, .promptLeak:
+            return .red
+        case .repeatPhrase:
+            return .orange
+        case .lowDensity, .highDensity:
+            return .yellow
+        }
     }
 }
 
