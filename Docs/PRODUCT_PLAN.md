@@ -192,6 +192,8 @@ Speech model timestamps
  -> final SRT validation
 ```
 
+Detailed implementation work is tracked in `Docs/QUALITY_AND_POLISH_WORKPLAN.md`.
+
 ## Timing Accuracy
 
 Accurate timestamps are a core product requirement.
