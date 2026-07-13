@@ -49,6 +49,7 @@ Already implemented:
 - ASR Quality Report for repeated text, repeated phrases, prompt leakage, and unusual text density.
 - Conservative ASR artifact cleanup for prompt leakage and adjacent repeated phrase loops.
 - TXT transcript export generated from the cleaned SRT output.
+- VTT subtitle export generated from the cleaned SRT output.
 
 ## Workstream 1: ASR Quality Report
 

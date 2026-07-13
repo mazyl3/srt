@@ -445,7 +445,7 @@ final class AppModel: ObservableObject {
             let cancelled = jobs.filter { $0.state == .cancelled }.count
             let completedSRTs = jobs.flatMap(\.srtFiles)
             resultFiles = jobs.flatMap { job in
-                [job.resultFile].compactMap { $0 } + job.srtFiles + job.transcriptFiles
+                [job.resultFile].compactMap { $0 } + job.srtFiles + job.transcriptFiles + job.vttFiles
             }
             qualityReport = analyzeSRTFiles(completedSRTs, settings: localSettings)
             asrQualityReport = analyzeASRFiles(completedSRTs)
@@ -509,6 +509,7 @@ final class AppModel: ObservableObject {
                 $0.resultFile = result.primaryFile
                 $0.srtFiles = result.srtFiles
                 $0.transcriptFiles = result.transcriptFiles
+                $0.vttFiles = result.vttFiles
                 $0.phase = .complete
                 $0.state = .complete
                 $0.progress = 1
@@ -719,9 +720,9 @@ final class AppModel: ObservableObject {
             return "MP4 su subtitrais sukurtas."
         }
         if result.srtFiles.count > 1 {
-            return result.transcriptFiles.isEmpty ? "SRT failai sukurti." : "SRT ir TXT failai sukurti."
+            return result.transcriptFiles.isEmpty ? "SRT failai sukurti." : "SRT, TXT ir VTT failai sukurti."
         }
-        return result.transcriptFiles.isEmpty ? "SRT failas sukurtas." : "SRT ir TXT transcript sukurti."
+        return result.transcriptFiles.isEmpty ? "SRT failas sukurtas." : "SRT, TXT transcript ir VTT sukurti."
     }
 
     private func analyzeSRTFiles(_ files: [URL], settings: AppSettings) -> SRTQAReport? {
