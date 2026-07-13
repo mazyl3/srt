@@ -267,6 +267,84 @@ Language profile
  -> quality warnings
 ```
 
+## Lithuanian Speech And Semantics Strategy
+
+SRT Forge should treat Lithuanian quality as a product moat, not as a UI language setting.
+
+Two Lithuanian-specific pillars matter:
+
+1. LIEPA-3 for speech recognition quality.
+2. SEMANTIKA-style linguistic analysis for text cleanup, punctuation, sentence structure, and meaning-aware subtitle polish.
+
+### LIEPA-3
+
+LIEPA-3 is strategically important because it is a large Lithuanian ASR/STT corpus, not just a small demo dataset.
+
+Public information indicates:
+- about 10,000 hours of annotated Lithuanian speech,
+- FLAC audio at 44.1 kHz, 16-bit, mono,
+- text annotations at phrase and word levels,
+- Praat TextGrid phoneme-level annotations for part of the corpus,
+- read speech, spontaneous speech, and dialect material,
+- about 1.13 TB compressed release size split into large download parts,
+- availability through Lithuanian open data / CLARIN-LT channels.
+
+Product implication:
+SRT Forge should not try to hand-build a small Lithuanian speech base first. The practical route is to evaluate LIEPA-3 as the foundation for Lithuanian ASR improvement.
+
+Possible uses:
+- evaluate current Whisper large-v3 Lithuanian errors against LIEPA-3 samples,
+- fine-tune or train a Lithuanian-first ASR model if licensing and compute allow it,
+- build a Lithuanian pronunciation / phrase correction layer,
+- improve forced alignment and timestamp confidence using word-level annotations,
+- create benchmark sets for production audio, spontaneous speech, and dialects.
+
+Important constraints:
+- verify license before any commercial training or redistribution,
+- do not bundle the corpus inside the app,
+- do not require normal users to download terabytes of training data,
+- keep the shipped app local and lightweight,
+- if a derived model is created, distribute only the model if the license allows it.
+
+### SEMANTIKA-style Lithuanian text layer
+
+SEMANTIKA points toward the second layer: the transcript may be phonetically recognized, but it still needs to become good Lithuanian written text.
+
+This layer should help with:
+- punctuation,
+- capitalization,
+- sentence boundary detection,
+- Lithuanian morphology-aware cleanup,
+- phrase meaning and context repair,
+- speaker/dialogue readability,
+- subtitle shortening without changing meaning,
+- domain-specific cleanup for interviews, education, legal, medical, and administrative speech later.
+
+Product implication:
+The Lithuanian quality engine should become two-stage:
+
+```text
+ASR layer
+ -> raw Lithuanian words and rough timestamps
+ -> Lithuanian semantic/text polish layer
+ -> subtitle timing and readability engine
+ -> editor-ready SRT
+```
+
+This should be local-first. Existing online services are useful for research and benchmarking, but SRT Forge should not depend on cloud processing for private media.
+
+### Near-term implementation path
+
+For the current app, the next practical steps are:
+- create a Lithuanian ASR benchmark folder with known WAV + expected transcript pairs,
+- compare Whisper output against human reference text using WER/CER,
+- store SRT quality metrics separately from ASR text accuracy metrics,
+- add an internal "ASR Quality Report" for suspicious repeats, hallucinations, silence text, and likely wrong channels,
+- use production WAV channel diagnostics before model-level changes,
+- only then evaluate LIEPA-3-based model work.
+
+This keeps the product focused: first fix the real production WAV pipeline, then build a stronger Lithuanian model strategy on real evidence.
+
 ## Local Privacy
 
 Core rule:
@@ -484,6 +562,8 @@ Must be excellent:
 - transcript formats
 - local translation
 - optional model download/setup
+- Lithuanian semantic/text polish inspired by SEMANTIKA-style analysis
+- ASR accuracy benchmark with Lithuanian reference transcripts
 
 ### Stage 4: Live Captions
 

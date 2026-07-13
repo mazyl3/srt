@@ -192,6 +192,27 @@ Quality priority:
 4. English transcription.
 5. More languages.
 
+## Lithuanian data and semantics moat
+
+Lithuanian quality should become a defensible technical advantage.
+
+The strongest direction is not only "use Whisper better." The product needs a Lithuanian-specific quality stack:
+
+```text
+Production audio routing
+ -> local ASR model
+ -> Lithuanian semantic/text cleanup
+ -> subtitle timing engine
+ -> editor-ready output
+```
+
+LIEPA-3 matters because it is a major Lithuanian ASR/STT corpus with about 10,000 hours of annotated speech. It should be evaluated as the main future foundation for Lithuanian ASR benchmarking, fine-tuning, and possible Lithuanian-first model work.
+
+SEMANTIKA matters because speech recognition alone does not make professional subtitles. Lithuanian text needs punctuation, morphology-aware cleanup, sentence boundaries, readable dialogue formatting, and meaning-preserving shortening. This can become the local Lithuanian polish layer after raw ASR.
+
+Product rule:
+Use public Lithuanian language resources for research, benchmarking, and possible derived models only when licenses allow it. Do not make the normal app dependent on online services, and do not upload user media for processing.
+
 ## Product modes
 
 ### Minimal
