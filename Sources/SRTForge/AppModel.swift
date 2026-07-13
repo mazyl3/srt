@@ -1176,11 +1176,20 @@ private enum AudioDiagnosticAnalyzer {
                 )
             }
             report.recommendedChannel = report.channels
-                .compactMap { channel -> (Int, Double)? in
+                .compactMap { channel -> (Int, Double, Double)? in
                     guard let mean = channel.meanVolumeDB else { return nil }
-                    return (channel.channelIndex, mean)
+                    return (
+                        channel.channelIndex,
+                        mean + channelLabelScoreAdjustment(channel.label),
+                        mean
+                    )
                 }
-                .sorted { $0.1 > $1.1 }
+                .sorted {
+                    if $0.1 == $1.1 {
+                        return $0.2 > $1.2
+                    }
+                    return $0.1 > $1.1
+                }
                 .first?
                 .0
         }
@@ -1244,6 +1253,27 @@ private enum AudioDiagnosticAnalyzer {
             char != "\n" && char != "\r" && char != "\0"
         }
         return raw.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func channelLabelScoreAdjustment(_ label: String) -> Double {
+        let normalized = label.lowercased()
+        var adjustment = 0.0
+
+        if normalized.contains("mix") {
+            adjustment -= 8.0
+        }
+        if normalized.contains("boom") {
+            adjustment += 4.0
+        }
+        if normalized.contains("lav") || normalized.contains("lavalier") {
+            adjustment += 3.0
+        }
+        if !label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           !normalized.contains("mix") {
+            adjustment += 1.0
+        }
+
+        return adjustment
     }
 
     private static func readAudioDiagnostics(file: URL, ffprobePath: String) -> AudioDiagnosticReport {

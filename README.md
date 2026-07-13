@@ -43,6 +43,8 @@ For camera files with multiple audio tracks, the app can now prepare better Whis
 - show an audio diagnostics panel with track count, codec, channels, sample rate, volume level, and Auto best recommendation,
 - manually force a specific audio track from the diagnostics panel,
 - detect PolyWAV / multi-channel WAV files and choose or force individual channels such as BOOM or LAV,
+- prefer dedicated BOOM/LAV channels over production MixL/MixR channels when Auto best selects a PolyWAV channel,
+- use a safer no-prompt/no-speech Whisper profile for PolyWAV production WAVs to reduce silence and prompt hallucinations,
 - apply speech-focused filters before Whisper,
 - normalize loudness for speech,
 - reduce steady noise,

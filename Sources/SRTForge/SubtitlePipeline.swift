@@ -87,10 +87,25 @@ struct SubtitlePipeline {
             audioStreamCount: audioStreamCount,
             selectedAudioTrack: selectedAudioTrack
         )
+        let selectedTrackChannelCount = Self.audioChannelCount(
+            inputFile: safeInput,
+            ffmpegPath: ffmpegPath,
+            audioTrackIndex: selectedAudioTrack ?? 0
+        )
+        let usesPolyWAVProfile = audioStreamCount == 1 && selectedTrackChannelCount > 1
+        let effectiveNoSpeechThreshold = usesPolyWAVProfile
+            ? max(settings.noSpeechThreshold, 0.75)
+            : settings.noSpeechThreshold
         let sourceLabel = selectedAudioChannel.map { "Track \((selectedAudioTrack ?? 0) + 1), Ch \($0 + 1)" }
             ?? selectedAudioTrack.map { "Track \($0 + 1)" }
             ?? "mix"
         await log(.info, "Rasta audio trackų: \(audioStreamCount). Režimas: \(settings.audioInputMode.rawValue). Naudojamas šaltinis: \(sourceLabel).")
+        if usesPolyWAVProfile {
+            await log(
+                .info,
+                "PolyWAV režimas: aptikta \(selectedTrackChannelCount) kanalų viename WAV tracke. Whisper promptas išjungiamas, no-speech slenkstis: \(String(format: "%.2f", effectiveNoSpeechThreshold))."
+            )
+        }
         try await runner.run(
             executable: ffmpegPath,
             arguments: Self.audioPreparationArguments(
@@ -126,6 +141,8 @@ struct SubtitlePipeline {
                 settings: settings,
                 translateToEnglish: false,
                 languageCode: sourceLanguage,
+                allowLanguagePrompt: !usesPolyWAVProfile,
+                noSpeechThreshold: effectiveNoSpeechThreshold,
                 expectedSRT: lithuanianSRT,
                 updatePhase: updatePhase,
                 log: log,
@@ -159,6 +176,8 @@ struct SubtitlePipeline {
                 settings: settings,
                 translateToEnglish: true,
                 languageCode: sourceLanguage,
+                allowLanguagePrompt: !usesPolyWAVProfile,
+                noSpeechThreshold: effectiveNoSpeechThreshold,
                 expectedSRT: englishSRT,
                 updatePhase: updatePhase,
                 log: log,
@@ -409,17 +428,97 @@ struct SubtitlePipeline {
     }
 
     private static func bestAudioChannel(inputFile: URL, ffmpegPath: String, channelCount: Int) -> Int? {
-        let candidates = (0..<channelCount).compactMap { index -> AudioTrackScore? in
+        let labels = audioChannelLabels(inputFile: inputFile, channelCount: channelCount)
+        let candidates = (0..<channelCount).compactMap { index -> AudioChannelScore? in
             guard let meanVolume = channelMeanVolumeDB(inputFile: inputFile, ffmpegPath: ffmpegPath, channelIndex: index) else {
                 return nil
             }
-            return AudioTrackScore(index: index, meanVolumeDB: meanVolume)
+            let label = labels[index, default: ""]
+            return AudioChannelScore(
+                index: index,
+                meanVolumeDB: meanVolume,
+                adjustedScore: meanVolume + channelLabelScoreAdjustment(label)
+            )
         }
 
         return candidates
-            .sorted { $0.meanVolumeDB > $1.meanVolumeDB }
+            .sorted {
+                if $0.adjustedScore == $1.adjustedScore {
+                    return $0.meanVolumeDB > $1.meanVolumeDB
+                }
+                return $0.adjustedScore > $1.adjustedScore
+            }
             .first?
             .index
+    }
+
+    private static func audioChannelLabels(inputFile: URL, channelCount: Int) -> [Int: String] {
+        guard let handle = try? FileHandle(forReadingFrom: inputFile) else {
+            return [:]
+        }
+        defer { try? handle.close() }
+
+        let data = handle.readData(ofLength: 262_144)
+        let content = String(data: data, encoding: .isoLatin1) ?? ""
+        let pattern = #"s?TRK(\d+)="#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return [:] }
+
+        let matches = regex.matches(in: content, range: NSRange(content.startIndex..., in: content))
+        let parsed = matches.compactMap { match -> (Int, String)? in
+            guard
+                let numberRange = Range(match.range(at: 1), in: content),
+                let fullRange = Range(match.range(at: 0), in: content),
+                let number = Int(content[numberRange])
+            else {
+                return nil
+            }
+            let label = metadataValue(after: fullRange, in: content)
+            guard !label.isEmpty else { return nil }
+            return (number - 1, label)
+        }
+
+        if parsed.isEmpty {
+            return [:]
+        }
+
+        var labels: [Int: String] = [:]
+        for (index, label) in parsed where labels[index] == nil {
+            labels[index] = label
+        }
+        let orderedLabels = parsed.sorted { $0.0 < $1.0 }.map(\.1)
+        for index in 0..<channelCount where labels[index] == nil && index < orderedLabels.count {
+            labels[index] = orderedLabels[index]
+        }
+        return labels
+    }
+
+    private static func metadataValue(after range: Range<String.Index>, in content: String) -> String {
+        let suffix = content[range.upperBound...]
+        let raw = suffix.prefix { char in
+            char != "\n" && char != "\r" && char != "\0"
+        }
+        return raw.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func channelLabelScoreAdjustment(_ label: String) -> Double {
+        let normalized = label.lowercased()
+        var adjustment = 0.0
+
+        if normalized.contains("mix") {
+            adjustment -= 8.0
+        }
+        if normalized.contains("boom") {
+            adjustment += 4.0
+        }
+        if normalized.contains("lav") || normalized.contains("lavalier") {
+            adjustment += 3.0
+        }
+        if !label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           !normalized.contains("mix") {
+            adjustment += 1.0
+        }
+
+        return adjustment
     }
 
     private static func channelMeanVolumeDB(inputFile: URL, ffmpegPath: String, channelIndex: Int) -> Double? {
@@ -695,6 +794,8 @@ struct SubtitlePipeline {
         settings: AppSettings,
         translateToEnglish: Bool,
         languageCode: String,
+        allowLanguagePrompt: Bool,
+        noSpeechThreshold: Double,
         expectedSRT: URL,
         updatePhase: @escaping @MainActor (JobPhase, Double) -> Void,
         log: @escaping @MainActor (LogEntry.LogLevel, String) -> Void,
@@ -709,7 +810,9 @@ struct SubtitlePipeline {
             settings: settings,
             forceCPU: false,
             translateToEnglish: translateToEnglish,
-            languageCode: languageCode
+            languageCode: languageCode,
+            allowLanguagePrompt: allowLanguagePrompt,
+            noSpeechThreshold: noSpeechThreshold
         )
 
         do {
@@ -737,7 +840,9 @@ struct SubtitlePipeline {
                 settings: settings,
                 forceCPU: true,
                 translateToEnglish: translateToEnglish,
-                languageCode: languageCode
+                languageCode: languageCode,
+                allowLanguagePrompt: allowLanguagePrompt,
+                noSpeechThreshold: noSpeechThreshold
             )
 
             try await runner.run(
@@ -761,7 +866,9 @@ struct SubtitlePipeline {
         settings: AppSettings,
         forceCPU: Bool,
         translateToEnglish: Bool,
-        languageCode: String
+        languageCode: String,
+        allowLanguagePrompt: Bool,
+        noSpeechThreshold: Double
     ) -> [String] {
         var arguments = [
             "-m", modelPath,
@@ -774,7 +881,7 @@ struct SubtitlePipeline {
             "-ml", "\(settings.maxSegmentLength)",
             "-bo", "\(settings.bestOf)",
             "-bs", "\(settings.beamSize)",
-            "-nth", String(format: "%.2f", settings.noSpeechThreshold)
+            "-nth", String(format: "%.2f", noSpeechThreshold)
         ]
 
         if settings.splitOnWord {
@@ -793,7 +900,7 @@ struct SubtitlePipeline {
             arguments.append("-tr")
         }
 
-        if settings.useWhisperLanguagePrompt, let prompt = whisperPrompt(languageCode: languageCode, translateToEnglish: translateToEnglish) {
+        if allowLanguagePrompt && settings.useWhisperLanguagePrompt, let prompt = whisperPrompt(languageCode: languageCode, translateToEnglish: translateToEnglish) {
             arguments.append("--prompt")
             arguments.append(prompt)
             arguments.append("--carry-initial-prompt")
@@ -1364,4 +1471,10 @@ private struct SubtitleQualityReport {
 private struct AudioTrackScore {
     let index: Int
     let meanVolumeDB: Double
+}
+
+private struct AudioChannelScore {
+    let index: Int
+    let meanVolumeDB: Double
+    let adjustedScore: Double
 }
