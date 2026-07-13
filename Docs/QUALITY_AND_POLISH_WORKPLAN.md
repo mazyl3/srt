@@ -50,6 +50,7 @@ Already implemented:
 - Conservative ASR artifact cleanup for prompt leakage and adjacent repeated phrase loops.
 - TXT transcript export generated from the cleaned SRT output.
 - VTT subtitle export generated from the cleaned SRT output.
+- ASS styled subtitle export generated from the cleaned SRT output.
 
 ## Workstream 1: ASR Quality Report
 

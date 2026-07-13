@@ -16,6 +16,7 @@ SRT Forge is a local Mac power tool for subtitle generation:
 - The final `.srt` is saved next to the original file, or in a folder you choose.
 - A clean `.txt` transcript is saved next to each generated SRT.
 - A `.vtt` subtitle file is saved for web/video workflows.
+- A styled `.ass` subtitle file is saved for Aegisub/libass workflows.
 - Optionally create a new `.mp4` copy with an internal subtitle track.
 - Optionally create a new burned-in `.mp4` copy when ffmpeg supports the subtitles/libass filter.
 - Check for updates from a small GitHub-hosted manifest.
@@ -61,6 +62,7 @@ The app now separates raw transcription quality from SRT formatting quality:
 - The cleanup is conservative and can be disabled in experienced/advanced settings when a raw transcript is needed.
 - Clean TXT transcripts are exported from the cleaned SRT text for review, editing, and benchmark references.
 - VTT subtitles are exported from the cleaned SRT timing for web players and creator platforms.
+- ASS subtitles are exported with a clean default style for styled subtitle workflows.
 
 ## Modes
 

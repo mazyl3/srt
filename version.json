@@ -1,7 +1,7 @@
 {
   "version": "1.0.0",
-  "build": "120",
-  "downloadURL": "https://github.com/mazyl3/srt/releases/download/v1.0.0-build120/SRT-Forge-Setup.dmg",
-  "releaseNotes": "Version 1.0.0 build 120: exports VTT subtitle files next to generated SRT and TXT outputs, while keeping GitHub API update checking, conservative ASR artifact cleanup, ASR Quality Report, SRT QA, PolyWAV BOOM/LAV channel selection, Burned MP4 export, Lithuanian/English output, and offline setup.",
+  "build": "121",
+  "downloadURL": "https://github.com/mazyl3/srt/releases/download/v1.0.0-build121/SRT-Forge-Setup.dmg",
+  "releaseNotes": "Version 1.0.0 build 121: exports styled ASS subtitle files next to SRT, TXT, and VTT outputs, while keeping GitHub API update checking, conservative ASR artifact cleanup, ASR Quality Report, SRT QA, PolyWAV BOOM/LAV channel selection, Burned MP4 export, Lithuanian/English output, and offline setup.",
   "minimumSystemVersion": "13.0"
 }
