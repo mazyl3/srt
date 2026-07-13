@@ -444,7 +444,9 @@ final class AppModel: ObservableObject {
             let failed = jobs.filter { $0.state == .failed }.count
             let cancelled = jobs.filter { $0.state == .cancelled }.count
             let completedSRTs = jobs.flatMap(\.srtFiles)
-            resultFiles = jobs.compactMap(\.resultFile)
+            resultFiles = jobs.flatMap { job in
+                [job.resultFile].compactMap { $0 } + job.srtFiles + job.transcriptFiles
+            }
             qualityReport = analyzeSRTFiles(completedSRTs, settings: localSettings)
             asrQualityReport = analyzeASRFiles(completedSRTs)
             logASRQualityReport(asrQualityReport)
@@ -506,6 +508,7 @@ final class AppModel: ObservableObject {
             updateJob(item.id) {
                 $0.resultFile = result.primaryFile
                 $0.srtFiles = result.srtFiles
+                $0.transcriptFiles = result.transcriptFiles
                 $0.phase = .complete
                 $0.state = .complete
                 $0.progress = 1
@@ -708,15 +711,17 @@ final class AppModel: ObservableObject {
 
     private func completionMessage(for result: PipelineResult) -> String {
         if result.videoFile != nil && !result.srtFiles.isEmpty {
-            return "SRT ir MP4 su subtitrais sukurti."
+            return result.transcriptFiles.isEmpty
+                ? "SRT ir MP4 su subtitrais sukurti."
+                : "SRT, TXT transcript ir MP4 su subtitrais sukurti."
         }
         if result.videoFile != nil {
             return "MP4 su subtitrais sukurtas."
         }
         if result.srtFiles.count > 1 {
-            return "SRT failai sukurti."
+            return result.transcriptFiles.isEmpty ? "SRT failai sukurti." : "SRT ir TXT failai sukurti."
         }
-        return "SRT failas sukurtas."
+        return result.transcriptFiles.isEmpty ? "SRT failas sukurtas." : "SRT ir TXT transcript sukurti."
     }
 
     private func analyzeSRTFiles(_ files: [URL], settings: AppSettings) -> SRTQAReport? {

@@ -294,10 +294,11 @@ struct AppSettings {
 struct PipelineResult: Equatable {
     let primaryFile: URL
     let srtFiles: [URL]
+    let transcriptFiles: [URL]
     let videoFile: URL?
 
     var allFiles: [URL] {
-        srtFiles + [videoFile].compactMap { $0 }
+        srtFiles + transcriptFiles + [videoFile].compactMap { $0 }
     }
 }
 
@@ -516,6 +517,7 @@ struct TranscriptionJob: Identifiable, Equatable {
     let inputFile: URL
     var resultFile: URL?
     var srtFiles: [URL] = []
+    var transcriptFiles: [URL] = []
     var phase: JobPhase = .idle
     var state: JobState = .waiting
     var progress: Double = 0

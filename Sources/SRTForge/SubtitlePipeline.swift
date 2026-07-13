@@ -51,12 +51,14 @@ struct SubtitlePipeline {
         let sourceLanguage = settings.autoDetectLanguage ? "auto" : settings.languageCode
         let lithuanianOutputBase = wantsEnglish ? outputBase.appendingPathExtension("lt") : outputBase
         let lithuanianSRT = lithuanianOutputBase.appendingPathExtension("srt")
+        let lithuanianTXT = lithuanianOutputBase.appendingPathExtension("txt")
         let englishOutputBase = outputBase.appendingPathExtension("en")
         let englishSRT = englishOutputBase.appendingPathExtension("srt")
+        let englishTXT = englishOutputBase.appendingPathExtension("txt")
         let subtitleTrackVideo = outputBase.appendingPathExtension("subtitled").appendingPathExtension("mp4")
         let burnedInVideo = outputBase.appendingPathExtension("burned").appendingPathExtension("mp4")
 
-        for url in [lithuanianSRT, englishSRT, subtitleTrackVideo, burnedInVideo] where FileManager.default.fileExists(atPath: url.path) {
+        for url in [lithuanianSRT, lithuanianTXT, englishSRT, englishTXT, subtitleTrackVideo, burnedInVideo] where FileManager.default.fileExists(atPath: url.path) {
             try FileManager.default.removeItem(at: url)
         }
 
@@ -155,8 +157,10 @@ struct SubtitlePipeline {
                 throw PipelineError.commandFailed("Whisper baigė darbą, bet lietuviškas SRT failas nerastas: \(lithuanianSRT.path)")
             }
             let report = try Self.cleanSRT(at: lithuanianSRT, settings: settings)
+            try Self.writeTranscriptText(from: lithuanianSRT, to: lithuanianTXT)
             await Self.logQualityReport(report, fileName: lithuanianSRT.lastPathComponent, log: log)
             await log(.success, "Lietuviškas SRT sukurtas: \(lithuanianSRT.path)")
+            await log(.success, "Lietuviškas TXT transcript sukurtas: \(lithuanianTXT.path)")
         }
 
         if wantsEnglish {
@@ -190,13 +194,16 @@ struct SubtitlePipeline {
                 throw PipelineError.commandFailed("Whisper baigė vertimą, bet angliškas SRT failas nerastas: \(englishSRT.path)")
             }
             let report = try Self.cleanSRT(at: englishSRT, settings: settings)
+            try Self.writeTranscriptText(from: englishSRT, to: englishTXT)
             await Self.logQualityReport(report, fileName: englishSRT.lastPathComponent, log: log)
             await log(.success, "Angliškas SRT sukurtas: \(englishSRT.path)")
+            await log(.success, "Angliškas TXT transcript sukurtas: \(englishTXT.path)")
         }
 
         await updatePhase(.finishing, 0.92)
 
         var createdSRTs = [lithuanianSRT, englishSRT].filter { FileManager.default.fileExists(atPath: $0.path) }
+        var createdTranscripts = [lithuanianTXT, englishTXT].filter { FileManager.default.fileExists(atPath: $0.path) }
         let subtitleForVideo = wantsLithuanian && FileManager.default.fileExists(atPath: lithuanianSRT.path)
             ? lithuanianSRT
             : englishSRT
@@ -246,8 +253,12 @@ struct SubtitlePipeline {
                 for srt in createdSRTs {
                     try? FileManager.default.removeItem(at: srt)
                 }
+                for transcript in createdTranscripts {
+                    try? FileManager.default.removeItem(at: transcript)
+                }
                 createdSRTs.removeAll()
-                await log(.info, "Pasirinktas tik video eksportas, todėl tarpinis SRT failas pašalintas.")
+                createdTranscripts.removeAll()
+                await log(.info, "Pasirinktas tik video eksportas, todėl tarpiniai SRT/TXT failai pašalinti.")
             }
         }
 
@@ -274,7 +285,7 @@ struct SubtitlePipeline {
 
         let visibleSRTs = createdSRTs
         let primary = createdVideo ?? (wantsLithuanian ? lithuanianSRT : englishSRT)
-        return PipelineResult(primaryFile: primary, srtFiles: visibleSRTs, videoFile: createdVideo)
+        return PipelineResult(primaryFile: primary, srtFiles: visibleSRTs, transcriptFiles: createdTranscripts, videoFile: createdVideo)
     }
 
     private static func audioPreparationArguments(
@@ -1431,6 +1442,35 @@ struct SubtitlePipeline {
     private static func renderSRTBlock(_ block: SubtitleBlock, number: Int) -> String {
         ([String(number), "\(formatSRTTimestamp(block.start)) --> \(formatSRTTimestamp(block.end))"] + block.lines)
             .joined(separator: "\n")
+    }
+
+    private static func writeTranscriptText(from srtURL: URL, to txtURL: URL) throws {
+        let content = try String(contentsOf: srtURL, encoding: .utf8)
+        let normalized = content
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+
+        let paragraphs = normalized
+            .components(separatedBy: "\n\n")
+            .compactMap { block -> String? in
+                let lines = block
+                    .components(separatedBy: "\n")
+                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .filter { !$0.isEmpty }
+                    .filter { !$0.contains("-->") }
+                    .filter { Int($0) == nil }
+
+                let text = lines
+                    .joined(separator: " ")
+                    .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                return text.isEmpty ? nil : text
+            }
+
+        let transcript = paragraphs
+            .joined(separator: "\n\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines) + "\n"
+        try transcript.write(to: txtURL, atomically: true, encoding: .utf8)
     }
 
     private static func parseSRTTimestamp(_ raw: String) -> Double? {

@@ -48,6 +48,7 @@ Already implemented:
 - SRT structural QA panel with timing, CPS, line-length, and examples.
 - ASR Quality Report for repeated text, repeated phrases, prompt leakage, and unusual text density.
 - Conservative ASR artifact cleanup for prompt leakage and adjacent repeated phrase loops.
+- TXT transcript export generated from the cleaned SRT output.
 
 ## Workstream 1: ASR Quality Report
 
@@ -306,7 +307,7 @@ Definition of done:
 4. Add WER/CER script for reference transcript comparison.
 5. Add UI summary for ASR Quality separately from SRT Quality.
 6. Improve Lithuanian punctuation and duplicate phrase cleanup.
-7. Add export of `.txt` transcript next to SRT.
+7. Add richer `.txt` transcript formatting and optional paragraph merge controls.
 8. Start LIEPA-3 license/format research as a separate research task.
 
 ## What We Should Not Do Yet

@@ -14,6 +14,7 @@ SRT Forge is a local Mac power tool for subtitle generation:
 - `ffmpeg` converts the copy to `16 kHz mono WAV`.
 - `whisper.cpp` transcribes it with `ggml-large-v3.bin`.
 - The final `.srt` is saved next to the original file, or in a folder you choose.
+- A clean `.txt` transcript is saved next to each generated SRT.
 - Optionally create a new `.mp4` copy with an internal subtitle track.
 - Optionally create a new burned-in `.mp4` copy when ffmpeg supports the subtitles/libass filter.
 - Check for updates from a small GitHub-hosted manifest.
@@ -57,6 +58,7 @@ The app now separates raw transcription quality from SRT formatting quality:
 - ASR Quality Report flags suspicious repeated text, repeated phrases, prompt leakage, and unusual text density.
 - The subtitle cleanup pass can remove obvious ASR prompt leakage and collapse adjacent repeated phrase loops.
 - The cleanup is conservative and can be disabled in experienced/advanced settings when a raw transcript is needed.
+- Clean TXT transcripts are exported from the cleaned SRT text for review, editing, and benchmark references.
 
 ## Modes
 
