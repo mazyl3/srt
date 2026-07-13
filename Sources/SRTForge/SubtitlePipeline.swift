@@ -1008,6 +1008,9 @@ struct SubtitlePipeline {
         let trimmed = lines
             .map(normalizeTextSpacing)
             .filter { !$0.isEmpty }
+            .filter { !settings.removeASRArtifacts || !isPromptLeakageText($0) }
+            .map { settings.removeASRArtifacts ? collapseRepeatedPhrases(in: $0) : $0 }
+            .filter { !$0.isEmpty }
 
         let dialogueAware = settings.formatDialogueLines
             ? trimmed.flatMap(splitDialogueLine)
@@ -1038,6 +1041,60 @@ struct SubtitlePipeline {
         value = value.replacingOccurrences(of: #"\s+([)\]»”])"#, with: "$1", options: .regularExpression)
         value = value.replacingOccurrences(of: #"([(\[«“])\s+"#, with: "$1", options: .regularExpression)
         return value.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func isPromptLeakageText(_ line: String) -> Bool {
+        let normalized = normalizedASRText(line)
+        let markers = [
+            "tvarkinga transkripcija",
+            "lietuviska skyryba",
+            "sakiniais ir dialogais",
+            "clear speech transcription",
+            "readable subtitle",
+            "punctuation and readable",
+            "translated into natural english"
+        ]
+        return markers.contains { normalized.contains($0) }
+    }
+
+    private static func collapseRepeatedPhrases(in line: String) -> String {
+        let words = line.split(separator: " ").map(String.init)
+        guard words.count >= 6 else { return line }
+
+        var cleaned = words
+        var changed = true
+
+        while changed {
+            changed = false
+            let maxLength = min(8, cleaned.count / 2)
+            guard maxLength >= 2 else { break }
+
+            for length in stride(from: maxLength, through: 2, by: -1) {
+                guard cleaned.count >= length * 2 else { continue }
+                var index = 0
+                while index <= cleaned.count - length * 2 {
+                    let first = Array(cleaned[index..<(index + length)]).map(normalizedASRText)
+                    let second = Array(cleaned[(index + length)..<(index + length * 2)]).map(normalizedASRText)
+                    if first == second {
+                        cleaned.removeSubrange((index + length)..<(index + length * 2))
+                        changed = true
+                    } else {
+                        index += 1
+                    }
+                }
+            }
+        }
+
+        return normalizeTextSpacing(cleaned.joined(separator: " "))
+    }
+
+    private static func normalizedASRText(_ text: String) -> String {
+        text
+            .lowercased()
+            .folding(options: [.diacriticInsensitive], locale: .current)
+            .replacingOccurrences(of: #"[^a-z0-9ąčęėįšųūžĄČĘĖĮŠŲŪŽ ]+"#, with: " ", options: .regularExpression)
+            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private static func splitDialogueLine(_ line: String) -> [String] {

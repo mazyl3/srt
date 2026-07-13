@@ -46,6 +46,8 @@ Already implemented:
 - Safer no-prompt PolyWAV Whisper profile.
 - Stricter no-speech threshold for multi-channel production WAV.
 - SRT structural QA panel with timing, CPS, line-length, and examples.
+- ASR Quality Report for repeated text, repeated phrases, prompt leakage, and unusual text density.
+- Conservative ASR artifact cleanup for prompt leakage and adjacent repeated phrase loops.
 
 ## Workstream 1: ASR Quality Report
 

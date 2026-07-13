@@ -139,12 +139,14 @@ final class AppModel: ObservableObject {
             settings.splitOnWord = true
             settings.normalizePunctuation = true
             settings.formatDialogueLines = true
+            settings.removeASRArtifacts = true
             settings.suppressNonSpeechTokens = true
             settings.maxSegmentLength = 42
         case .simple:
             settings.keepWorkingFiles = false
             settings.normalizePunctuation = true
             settings.formatDialogueLines = true
+            settings.removeASRArtifacts = true
             settings.suppressNonSpeechTokens = true
         case .power, .advanced:
             break

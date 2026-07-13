@@ -1523,6 +1523,7 @@ private struct PowerSettingsPanel: View {
                         Toggle("Skaidyti per sakinius", isOn: $model.settings.splitOnSentenceBoundaries)
                         Toggle("Baigti sakinius skyryba", isOn: $model.settings.normalizePunctuation)
                         Toggle("Tvarkyti dialogo brūkšnius", isOn: $model.settings.formatDialogueLines)
+                        Toggle("Valyti ASR pasikartojimus", isOn: $model.settings.removeASRArtifacts)
                     }
                 }
 

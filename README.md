@@ -50,6 +50,14 @@ For camera files with multiple audio tracks, the app can now prepare better Whis
 - reduce steady noise,
 - pass a language prompt to Whisper for better Lithuanian/English context.
 
+## ASR Quality And Polish
+
+The app now separates raw transcription quality from SRT formatting quality:
+
+- ASR Quality Report flags suspicious repeated text, repeated phrases, prompt leakage, and unusual text density.
+- The subtitle cleanup pass can remove obvious ASR prompt leakage and collapse adjacent repeated phrase loops.
+- The cleanup is conservative and can be disabled in experienced/advanced settings when a raw transcript is needed.
+
 ## Modes
 
 ### Paprasta
